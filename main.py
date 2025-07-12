@@ -32,22 +32,27 @@ from src.PDLPR.PDLPR import PDLPR
 
 batch_size = 2
 in_channels = 3
-height, width = 1024, 720
-base_channels = 64
-
-# base_channels = output channels di IGFE perchè serve come input encoder d_model
-encoder_d_model = base_channels  # deve essere coerente
-encoder_nhead = 8
-encoder_height = 16  # altezza dopo IGFE
-encoder_width = 16   # larghezza dopo IGFE
-
+height, width = 48, 144
 
 
 #  input di prova
 x = torch.randn(batch_size, in_channels, height, width)
 
 
-model = PDLPR(in_channels, base_channels, encoder_d_model, encoder_nhead, encoder_height, encoder_width)
+#model = PDLPR(in_channels, base_channels, encoder_d_model, encoder_nhead, encoder_height, encoder_width)
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model = PDLPR(
+    in_channels=3,
+    base_channels=512,
+    encoder_d_model=512,
+    encoder_nhead=8,
+    encoder_height=16,
+    encoder_width=16,
+    decoder_num_layers=3
+)
 
 out = model(x)
 

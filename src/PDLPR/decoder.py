@@ -88,17 +88,26 @@ class DecodingModule(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, d_model=1024, nhead=8, height=16, width=16, num_layers=3):
+    def __init__(self, d_model=1024, nhead=8, height=16, width=16, num_layers=3, num_classes=68):
         super(Decoder, self).__init__()
         
         self.layers = nn.ModuleList([
             DecodingModule(d_model=d_model, nhead=nhead, height=height, width=width)
             for _ in range(num_layers)
         ])
+
+        # layer finale per proiettare sui caratteri (classe per ogni posizione)
+        self.classifier = nn.Linear(d_model, num_classes)
         
     def forward(self, x, encoder_out):
-        # x: (B, C=d_model, H, W)
-        # encoder_out: (B, C=d_model, H_enc, W_enc)
+        # x: (B, C, H, W)
+        # encoder_out: (B, C, H_enc, W_enc)
+
         for layer in self.layers:
-            x = layer(x, encoder_out)
-        return x
+            x = layer(x, encoder_out)  # (B, C, H, W)
+
+        B, C, H, W = x.shape
+        x = x.permute(0, 2, 3, 1).reshape(B, H * W, C)  # (B, SeqLen, C)
+
+        logits = self.classifier(x)  # (B, SeqLen, num_classes)
+        return logits

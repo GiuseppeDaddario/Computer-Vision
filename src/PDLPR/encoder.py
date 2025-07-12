@@ -68,9 +68,9 @@ class EncoderModule(nn.Module):
         super(EncoderModule, self).__init__()
 
         self.pos_enc = PositionalEncoding2D(d_model, height, width)
-        self.cnn_block1 = CNNBlock(in_channels=d_model, out_channels=d_model, stride=1, kernel_size=1, padding=0)
+        self.cnn_block1 = CNNBlock(in_channels=d_model, out_channels=d_model, kernel_size=1, stride=1, padding=0)
         self.mha = nn.MultiheadAttention(embed_dim=d_model, num_heads=nhead)
-        self.cnn_block2 = CNNBlock(in_channels=d_model, out_channels=d_model, stride=1, kernel_size=1, padding=0)
+        self.cnn_block2 = CNNBlock(in_channels=d_model, out_channels=d_model, kernel_size=1, stride=1, padding=0)
         self.add_norm = nn.LayerNorm(d_model)
 
     def forward(self, x):

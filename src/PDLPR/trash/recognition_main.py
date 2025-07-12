@@ -169,12 +169,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model = PDLPR(
     in_channels=3,
-    base_channels=64,
-    encoder_d_model=1024,
+    base_channels=512,
+    encoder_d_model=512,
     encoder_nhead=8,
-    encoder_height=8,
-    encoder_width=16
-).to(device)
+    encoder_height=16,
+    encoder_width=16,
+    decoder_num_layers=3
+)
+model = model.to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 loss_fn = nn.CrossEntropyLoss(ignore_index=0)  # Ignora PAD token
@@ -183,7 +185,7 @@ loss_fn = nn.CrossEntropyLoss(ignore_index=0)  # Ignora PAD token
 # ====== CARICAMENTO DATASET E DATALOADER ======
 
 dataset = CCPDPlateDataset(image_folder=image_folder_1)
-dataloader = DataLoader(dataset, batch_size=32, shuffle=True, collate_fn=collate_fn)
+dataloader = DataLoader(dataset, batch_size=2, shuffle=True, collate_fn=collate_fn)
 
 
 # ====== TRAINING LOOP ======
