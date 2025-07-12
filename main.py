@@ -1,5 +1,25 @@
 import torch
+from src.YOLOV5.YOLOV5 import YOLOV5
 from src.PDLPR.PDLPR import PDLPR
+
+
+
+
+
+
+
+
+
+
+
+#################################
+#########   DETECTION   #########
+#################################
+
+
+
+## poi inseriamo qua la detection con yolo
+
 
 
 
