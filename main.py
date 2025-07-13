@@ -34,7 +34,7 @@ if __name__ == "__main__":
 # ------ training ------ #
 
     train_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_base"
-    #PDLPR_training(train_folder, batch_size=32, num_epochs=3)
+    PDLPR_training(train_folder, batch_size=32, num_epochs=3)
 
 
 
