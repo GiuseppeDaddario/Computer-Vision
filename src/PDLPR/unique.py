@@ -1,6 +1,10 @@
 ######### PREPROCESSING #########
 from PIL import Image
 import os
+from torch.cuda.amp import autocast, GradScaler
+
+
+
 
 def parse_box_from_filename(filename):
     # Esempio: filename = "074-153_423-245&374_263&409-..."
@@ -316,8 +320,8 @@ class SimplePlateTokenizer:
 tokenizer = SimplePlateTokenizer(charset)
 num_classes = tokenizer.vocab_size()
 seq_len = 8  # lunghezza massima targa CCPD
-print("[INFO] Charset:", charset)
-print("[INFO] num_classes:", num_classes)
+#print("[INFO] Charset:", charset)
+#print("[INFO] num_classes:", num_classes)
 
 # --- Dataset CCPD ---
 class CCPDPlateDataset(Dataset):
@@ -356,54 +360,69 @@ def collate_fn(batch):
         raise ValueError("Target fuori range per CrossEntropyLoss!")
     return images, targets
 
-# --- Training setup ---
-image_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_base" 
-batch_size = 8
-dataset = CCPDPlateDataset(image_folder)
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = PDLPR(
-    in_channels=3,
-    base_channels=256,
-    encoder_d_model=256,
-    encoder_nhead=4,
-    encoder_height=16,
-    encoder_width=16,
-    decoder_num_layers=2,
-    num_classes=num_classes,
-    seq_len=seq_len
-).to(device)
 
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-loss_fn = nn.CrossEntropyLoss(ignore_index=0)
+def main():
 
-# --- Training loop ---
-num_epochs = 10
+    # --- Training setup ---
+    image_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_base" 
+    batch_size = 32
+    dataset = CCPDPlateDataset(image_folder)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4)
 
-# --- Progress bar ---
-try:
-    from tqdm import tqdm
-except ImportError:
-    import subprocess
-    subprocess.check_call(["pip", "install", "tqdm"])
-    from tqdm import tqdm
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = PDLPR(
+        in_channels=3,
+        base_channels=256,
+        encoder_d_model=256,
+        encoder_nhead=4,
+        encoder_height=16,
+        encoder_width=16,
+        decoder_num_layers=2,
+        num_classes=num_classes,
+        seq_len=seq_len
+    ).to(device)
 
-for epoch in range(num_epochs):
-    model.train()
-    running_loss = 0.0
-    pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", unit="batch")
-    for images, targets in pbar:
-        images = images.to(device)
-        targets = targets.to(device)  # [B, seq_len]
-        optimizer.zero_grad()
-        output = model(images)  # [B, seq_len, num_classes]
-        output = output.permute(0, 2, 1)  # [B, num_classes, seq_len]
-        loss = loss_fn(output, targets)
-        loss.backward()
-        optimizer.step()
-        running_loss += loss.item()
-        pbar.set_postfix({"batch_loss": loss.item()})
-    avg_loss = running_loss / len(dataloader)
-    print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {avg_loss:.4f}")
-    # torch.save(model.state_dict(), "pdlpr_ccpd_checkpoint.pth")
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    loss_fn = nn.CrossEntropyLoss(ignore_index=0)
+
+
+    scaler = GradScaler() 
+
+    # --- Training loop ---
+    num_epochs = 1
+
+    # --- Progress bar ---
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        import subprocess
+        subprocess.check_call(["pip", "install", "tqdm"])
+        from tqdm import tqdm
+
+    for epoch in range(num_epochs):
+        model.train()
+        running_loss = 0.0
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", unit="batch")
+        for images, targets in pbar:
+            images = images.to(device)
+            targets = targets.to(device)  # [B, seq_len]
+            optimizer.zero_grad()
+            with autocast():
+                output = model(images)  # [B, seq_len, num_classes]
+                output = output.permute(0, 2, 1)  # [B, num_classes, seq_len]
+                loss = loss_fn(output, targets)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            running_loss += loss.item()
+            pbar.set_postfix({"batch_loss": loss.item()})
+        avg_loss = running_loss / len(dataloader)
+        print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {avg_loss:.4f}")
+  
+        torch.save(model.state_dict(), f"pdlpr_epoch{epoch+1}.pth")
+    
+    torch.save(model.state_dict(), "pdlpr_final.pth")
+
+if __name__ == "__main__":
+    main()
