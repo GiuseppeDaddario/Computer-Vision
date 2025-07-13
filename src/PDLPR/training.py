@@ -362,7 +362,7 @@ def collate_fn(batch):
 
 from torch.utils.data import random_split
 
-def main():
+def PDLPR_training(image_folder, batch_size=32, num_epochs=3):
 
     # --- Training setup ---
     image_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_base" 
@@ -442,5 +442,3 @@ def main():
     
     torch.save(model.state_dict(), "src/PDLPR/weights/pdlpr_final.pth")
 
-if __name__ == "__main__":
-    main()

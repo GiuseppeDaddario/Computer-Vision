@@ -1,4 +1,5 @@
 dataset/
 .idea/
 src/**/__pycache__/
-src/PDLPR/weights/
+src/PDLPR/weights/*
+!src/PDLPR/weights/.gitkeep

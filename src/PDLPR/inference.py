@@ -1,12 +1,13 @@
-def main():
-    from unique import PDLPR, CCPDPlateDataset, collate_fn, tokenizer, num_classes, seq_len
-    import torch
-    from torch.utils.data import DataLoader
-    from tqdm import tqdm
+from src.PDLPR.training import PDLPR, CCPDPlateDataset, collate_fn, tokenizer, num_classes, seq_len
+import torch
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
-    dataset_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_weather"
+
+def PDLPR_inference(dataset_folder, batch_size=64):
+
     dataset = CCPDPlateDataset(dataset_folder)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=False, collate_fn=collate_fn, num_workers=4)
+    dataloader = DataLoader(dataset, batch_size, shuffle=False, collate_fn=collate_fn, num_workers=4)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = PDLPR(
@@ -48,7 +49,7 @@ def main():
             for pred_seq, target_seq in zip(preds, targets):
                 pred_plate = decode_plate_pred(pred_seq.tolist())
                 gt_plate = decode_plate_gold(target_seq.tolist())
-                print(f"GT: {gt_plate} | Pred: {pred_plate}")
+                #print(f"GT: {gt_plate} | Pred: {pred_plate}")
                 if pred_plate == gt_plate:
                     correct += 1
                 total += 1
@@ -56,5 +57,8 @@ def main():
     accuracy = correct / total if total > 0 else 0
     print(f"Accuracy su {total} immagini: {accuracy:.4f}")
 
-if __name__ == "__main__":
-    main()
+
+
+
+
+

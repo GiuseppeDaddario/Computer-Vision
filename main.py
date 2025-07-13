@@ -1,14 +1,14 @@
-import torch
 from src.YOLOV5.YOLOV5 import YOLOV5
-from src.PDLPR.PDLPR import PDLPR
+#from src.PDLPR.PDLPR import PDLPR
+from src.PDLPR.training import PDLPR_training
+from src.PDLPR.inference import PDLPR_inference
 
 
 
 
 
 
-
-
+if __name__ == "__main__":
 
 
 
@@ -30,31 +30,17 @@ from src.PDLPR.PDLPR import PDLPR
 #########  RECOGNITION  #########
 #################################
 
-batch_size = 2
-in_channels = 3
-height, width = 48, 144
+
+# ------ training ------ #
+
+    train_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_base"
+    #PDLPR_training(train_folder, batch_size=32, num_epochs=3)
 
 
-#  input di prova
-x = torch.randn(batch_size, in_channels, height, width)
 
 
-#model = PDLPR(in_channels, base_channels, encoder_d_model, encoder_nhead, encoder_height, encoder_width)
+# ------ inference ------ #
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-model = PDLPR(
-    in_channels=3,
-    base_channels=512,
-    encoder_d_model=512,
-    encoder_nhead=8,
-    encoder_height=16,
-    encoder_width=16,
-    decoder_num_layers=3
-)
-
-out = model(x)
-
-print("Input shape:", x.shape)
-print("Output shape:", out.shape)
+    test_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_weather"
+    PDLPR_inference(test_folder, batch_size=64)
