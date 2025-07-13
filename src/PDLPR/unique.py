@@ -360,7 +360,7 @@ def collate_fn(batch):
         raise ValueError("Target fuori range per CrossEntropyLoss!")
     return images, targets
 
-
+from torch.utils.data import random_split
 
 def main():
 
@@ -368,7 +368,14 @@ def main():
     image_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_base" 
     batch_size = 32
     dataset = CCPDPlateDataset(image_folder)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4)
+
+    # Suddividi il dataset in 80% train e 20% val
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=4)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = PDLPR(
@@ -385,14 +392,10 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     loss_fn = nn.CrossEntropyLoss(ignore_index=0)
+    scaler = GradScaler()
 
+    num_epochs = 3
 
-    scaler = GradScaler() 
-
-    # --- Training loop ---
-    num_epochs = 1
-
-    # --- Progress bar ---
     try:
         from tqdm import tqdm
     except ImportError:
@@ -403,26 +406,41 @@ def main():
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-        pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", unit="batch")
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Train]", unit="batch")
         for images, targets in pbar:
             images = images.to(device)
-            targets = targets.to(device)  # [B, seq_len]
+            targets = targets.to(device)
             optimizer.zero_grad()
             with autocast():
-                output = model(images)  # [B, seq_len, num_classes]
-                output = output.permute(0, 2, 1)  # [B, num_classes, seq_len]
+                output = model(images)
+                output = output.permute(0, 2, 1)
                 loss = loss_fn(output, targets)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
             running_loss += loss.item()
             pbar.set_postfix({"batch_loss": loss.item()})
-        avg_loss = running_loss / len(dataloader)
-        print(f"Epoch [{epoch+1}/{num_epochs}] - Loss: {avg_loss:.4f}")
-  
-        torch.save(model.state_dict(), f"pdlpr_epoch{epoch+1}.pth")
+        avg_loss = running_loss / len(train_loader)
+        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {avg_loss:.4f}")
+
+        # VALIDATION
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for images, targets in tqdm(val_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Val]", unit="batch"):
+                images = images.to(device)
+                targets = targets.to(device)
+                with autocast():
+                    output = model(images)
+                    output = output.permute(0, 2, 1)
+                    loss = loss_fn(output, targets)
+                val_loss += loss.item()
+        avg_val_loss = val_loss / len(val_loader)
+        print(f"Epoch [{epoch+1}/{num_epochs}] - Val Loss: {avg_val_loss:.4f}")
+
+        torch.save(model.state_dict(), f"src/PDLPR/weights/pdlpr_epoch{epoch+1}.pth")
     
-    torch.save(model.state_dict(), "pdlpr_final.pth")
+    torch.save(model.state_dict(), "src/PDLPR/weights/pdlpr_final.pth")
 
 if __name__ == "__main__":
     main()
