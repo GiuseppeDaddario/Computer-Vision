@@ -330,7 +330,7 @@ def collate_fn(batch):
     return images, targets
 
 # --- Training setup ---
-image_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\dataset_minor" 
+image_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_base" 
 batch_size = 8
 dataset = CCPDPlateDataset(image_folder)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
