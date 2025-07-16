@@ -1,9 +1,6 @@
-# Root path
-path: dataset/CCPD_YOLO 
-
 # Subfolders path
-train: ccpd_base/images/train
-val: ccpd_base/images/val 
+train: dataset/CCPD_YOLO/ccpd_base/images/train
+val: dataset/CCPD_YOLO/ccpd_base/images/val
 
 # Classes
 names:

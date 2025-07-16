@@ -1,5 +1,4 @@
 # Building the .txt files, one for each image, with meta-data information in YOLO format
-# TODO: Needs to be revisited for Leonardo
 
 import os
 os.environ['WANDB_MODE'] = 'disabled'
@@ -8,22 +7,27 @@ from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 from tqdm import tqdm
 import shutil
+import random
 
 IMG_WIDTH = 1160
 IMG_HEIGHT = 720
 CLASS_ID = 0 
 
 ######################## UTILS FOR YOLOV5 ########################
-# [Data Pre-processing] Building the bounding box in YOLO format
 def convert_bbox(x1, y1, x2, y2):
+    """
+    Converts bbox coordinates in pixels (normalized), following the YOLO format.
+    """
     x_center = (x1 + x2) / 2.0 / IMG_WIDTH
     y_center = (y1 + y2) / 2.0 / IMG_HEIGHT
     width = abs(x2 - x1) / IMG_WIDTH
     height = abs(y2 - y1) / IMG_HEIGHT
     return x_center, y_center, width, height
 
-# [Data Pre-processing] Extracting meta-data from the image file name
 def parse_filename(fname):
+    """
+    Extracts bbox coordinates from the image file name and converts them in YOLO format
+    """
     parts = fname.split('-')
     if len(parts) < 4:
         return None
@@ -36,47 +40,62 @@ def parse_filename(fname):
     except:
         return None
 
-# [Data Pre-processing] Processing the list of names in a .txt file
-def prepare_yolo_dataset(src, dest_root="dataset", split="train", debug=False):
-    images_src = f"dataset/CCPD2019/{src}"
-    images_src = Path(images_src)
-    dest_root = f"dataset/{dest_root}/{src}"
+def process_images(images, images_src, dest_root, split):
+    """
+    Copy images in a new folder building the structure (splits and subfolders) required by YOLOv5.
+    """
     images_dest = Path(dest_root) / "images" / split
     labels_dest = Path(dest_root) / "labels" / split
-
     os.makedirs(images_dest, exist_ok=True)
     os.makedirs(labels_dest, exist_ok=True)
 
-    image_files = list(images_src.glob("*.jpg"))[:5] if debug else list(images_src.glob("*.jpg")) 
-
-    for img_path in tqdm(image_files, desc=f"Processing {split} set"):
+    for img_path in tqdm(images, desc=f"Processing {split} set"):
         bbox = parse_filename(img_path.name)
         if bbox is None:
             continue
 
-        # Copy image
-        dest_img = images_dest / img_path.name
-        shutil.copy(img_path, dest_img)
-
-        # Build label
+        shutil.copy(img_path, images_dest / img_path.name)
         label_path = labels_dest / (img_path.stem + ".txt")
         with open(label_path, 'w') as f:
             f.write(f"{CLASS_ID} {' '.join(f'{x:.6f}' for x in bbox)}\n")
 
-    print(f"Saved to {images_dest} and {labels_dest}")
+    print(f"{split} set saved to {images_dest} and {labels_dest}")
+
+def prepare_ccpd_base(dest_root="CCPD_YOLO", split_ratio=0.8, seed=42):
+    """
+    Builds the training subdataset 'ccpd_base'.
+    """
+    src = "ccpd_base"
+    images_src = Path(f"dataset/CCPD2019/{src}")
+    image_files = list(images_src.glob("*.jpg"))
+    random.seed(seed)
+    random.shuffle(image_files)
+
+    split_index = int(len(image_files) * split_ratio)
+    train_files = image_files[:split_index]
+    val_files = image_files[split_index:]
+
+    process_images(train_files, images_src, f"dataset/{dest_root}/{src}", "train")
+    process_images(val_files, images_src, f"dataset/{dest_root}/{src}", "val")
+
+def prepare_other_subset(subset, dest_root="CCPD_YOLO"):
+    """
+    Builds the other subdatasets for the testing phase (individually).
+    """
+    images_src = Path(f"dataset/CCPD2019/{subset}")
+    image_files = list(images_src.glob("*.jpg"))
+    process_images(image_files, images_src, f"dataset/{dest_root}/{subset}", "test")
 
 ##################################################################
 
 if __name__=="main":
-    subsets = [
-            "ccpd_base", "ccpd_blur", "ccpd_challenge", "ccpd_db",
-            "ccpd_fn", "ccpd_np", "ccpd_rotate", "ccpd_tilt", "ccpd_weather"
+    base_dest = "CCPD_YOLO"
+    other_subsets = [
+        "ccpd_blur", "ccpd_challenge", "ccpd_db",
+        "ccpd_fn", "ccpd_np", "ccpd_rotate", "ccpd_tilt", "ccpd_weather"
     ]
-    splits = ["train", "val", "test"]
-    dest_root = "ccpd2019_yolo"
 
-    tasks = [(subset, dest_root, split) for subset in subsets for split in splits]
+    prepare_ccpd_base(dest_root=base_dest)
 
-        # Usa un numero di processi pari ai core disponibili o meno se vuoi evitare overload
     with ProcessPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
-        executor.map(prepare_yolo_dataset, tasks)
+        executor.map(lambda s: prepare_other_subset(s, base_dest), other_subsets)
