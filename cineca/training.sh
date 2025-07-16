@@ -15,7 +15,7 @@
 module load cuda/12.1
 module load python/3.11
 
-source ~/mnlp/bin/activate 
+source $SCRATCH/mnlp/bin/activate 
 
 cd $SLURM_SUBMIT_DIR 
 
