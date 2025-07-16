@@ -1,4 +1,5 @@
 dataset_cv/
+cineca/dataset/
 .idea/
 src/**/__pycache__/
 src/PDLPR/weights/*
