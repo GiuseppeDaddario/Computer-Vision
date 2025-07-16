@@ -1,0 +1,7 @@
+# Subfolders path
+train: dataset/CCPD_YOLO/ccpd_base/images/train
+val: dataset/CCPD_YOLO/ccpd_base/images/val
+
+# Classes
+names:
+0: carplate

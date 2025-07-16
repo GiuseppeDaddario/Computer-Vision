@@ -3,3 +3,4 @@ dataset_cv/
 src/**/__pycache__/
 src/PDLPR/weights/*
 !src/PDLPR/weights/.gitkeep
+.DS_Store
