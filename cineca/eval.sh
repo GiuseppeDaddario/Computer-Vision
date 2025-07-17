@@ -21,7 +21,7 @@ cd /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5
 
 # Esegui rilevamento
 COLUMNS=80 PYTHONWARNINGS="ignore::FutureWarning" python detect.py \
-  --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs/train4/weights/best.pt \
+  --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs/train/weights/best.pt \
   --source /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_challenge/images/test \
   --img 640 \
   --conf 0.25 \
