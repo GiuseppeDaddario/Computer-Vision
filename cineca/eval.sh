@@ -15,8 +15,20 @@
 module load cuda/12.1
 module load python/3.11
 
-source $SCRATCH/mnlp/bin/activate 
+source $SCRATCH/ComputerVision/bin/activate 
 
-cd $SLURM_SUBMIT_DIR 
+cd /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5
 
-python cineca/codes/eval.py
+# Esegui rilevamento
+COLUMNS=80 PYTHONWARNINGS="ignore::FutureWarning" python detect.py \
+  --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs/train4/weights/best.pt \
+  --source /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_challenge/images/test \
+  --img 640 \
+  --conf 0.25 \
+  --iou 0.45 \
+  --device 0 \
+  --save-txt \
+  --save-conf \
+  --project /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs \
+  --name detect \
+  --exist-ok

@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=training
-#SBATCH --time=04:00:00                       
+#SBATCH --time=24:00:00                       
 #SBATCH --nodes=1                             
 #SBATCH --ntasks-per-node=1                   
-#SBATCH --cpus-per-task=8                     
-#SBATCH --gres=gpu:2                          
+#SBATCH --cpus-per-task=32                    
+#SBATCH --gres=gpu:4                          
 #SBATCH --partition=boost_usr_prod           
 #SBATCH --qos=normal                        
 #SBATCH --output=cineca/logs/training.out
@@ -15,8 +15,20 @@
 module load cuda/12.1
 module load python/3.11
 
-source $SCRATCH/mnlp/bin/activate 
+source $SCRATCH/ComputerVision/bin/activate 
 
-cd $SLURM_SUBMIT_DIR 
+cd /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5
 
-python cineca/codes/training.py
+COLUMNS=80 PYTHONWARNINGS="ignore::FutureWarning" torchrun --nproc_per_node=4 train.py \
+  --data /leonardo/home/userexternal/gdaddari/Computer-Vision/dataset/ccpd_2019.yaml \
+  --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5s.pt \
+  --batch-size 512 \
+  --img 640 \
+  --epochs 20 \
+  --optimizer Adam \
+  --hyp /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/hyp.yaml \
+  --cos-lr \
+  --project /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs \
+  --name train \
+  --cache ram \
+  --workers 8

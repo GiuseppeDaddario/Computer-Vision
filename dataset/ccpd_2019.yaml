@@ -3,5 +3,6 @@ train: /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_base
 val: /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_base/images/val
 
 # Classes
+nc: 1
 names:
-0: carplate
+  0: carplate
