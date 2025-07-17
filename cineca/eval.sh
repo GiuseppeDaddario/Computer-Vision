@@ -13,10 +13,10 @@
 
 
 module load cuda/12.1
-module load python/3.10
+module load python/3.11
 
-source ~/mnlp/bin/activate 
+source $SCRATCH/mnlp/bin/activate 
 
-cd cineca/codes
+cd $SLURM_SUBMIT_DIR 
 
-python eval.py
+python cineca/codes/eval.py

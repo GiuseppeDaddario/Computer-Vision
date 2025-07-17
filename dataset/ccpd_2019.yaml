@@ -1,6 +1,6 @@
 # Subfolders path
-train: dataset/CCPD_YOLO/ccpd_base/images/train
-val: dataset/CCPD_YOLO/ccpd_base/images/val
+train: /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_base/images/train
+val: /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_base/images/val
 
 # Classes
 names:

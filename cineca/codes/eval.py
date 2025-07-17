@@ -3,7 +3,7 @@ from src import YOLOv5_inference
 test_dir = "ccpd_challenge"
 TEST_PATH_YOLOV5 = f"dataset/CCPD_YOLO/{test_dir}/images/test" 
 
-if __name__ == "main":
+if __name__=="__main__":
 
     YOLOv5_inference(
         weights="yolov5/runs/train/exp/weights/best.pt",
