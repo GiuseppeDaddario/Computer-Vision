@@ -21,7 +21,7 @@ def PDLPR_inference(dataset_folder, batch_size=64):
         num_classes=num_classes,
         seq_len=seq_len
     ).to(device)
-    model.load_state_dict(torch.load("src/PDLPR/weights/pdlpr_final.pth", map_location=device))
+    model.load_state_dict(torch.load("src\PDLPR\weights\pdlpr_epoch46.pth", map_location=device))
     model.eval()
 
     def decode_plate_pred(seq):
@@ -56,9 +56,41 @@ def PDLPR_inference(dataset_folder, batch_size=64):
 
     accuracy = correct / total if total > 0 else 0
     print(f"Accuracy su {total} immagini: {accuracy:.4f}")
+    return accuracy
 
 
 
 
 
+import os
+from tabulate import tabulate
 
+def all_inference(base_path, batch_size=64):
+    """
+    Valuta tutti i subset di CCPD2019 presenti nel path base_path.
+    Stampa accuracy per ciascun subset e una tabella riassuntiva.
+    
+    Args:
+        base_path (str): Path a CCPD2019_extracted/CCPD2019/
+        batch_size (int): Batch size per inferenza.
+    """
+    results = []
+
+    # Sotto-cartelle del dataset
+    subset_folders = [f for f in os.listdir(base_path) 
+                      if os.path.isdir(os.path.join(base_path, f))]
+
+    for subset in sorted(subset_folders):
+        subset_path = os.path.join(base_path, subset)
+        print(f"\n Valutazione subset: {subset}")
+
+        try:
+            acc = PDLPR_inference(subset_path, batch_size=batch_size)
+            results.append((subset, f"{acc:.2%}"))
+        except Exception as e:
+            print(f"Errore su subset {subset}: {e}")
+            results.append((subset, "Errore"))
+
+    # Tabella finale
+    print("\n Riepilogo accuracies:")
+    print(tabulate(results, headers=["Subset", "Accuracy"], tablefmt="github"))
