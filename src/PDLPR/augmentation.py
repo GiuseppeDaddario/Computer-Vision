@@ -9,7 +9,7 @@ class FullRobustAugmentation:
         self.base = transforms.Compose([
             transforms.Resize((48, 144)),
             transforms.ColorJitter(brightness=0.6, contrast=0.6, saturation=0.3, hue=0.1),
-            transforms.RandomRotation(degrees=20),
+            transforms.RandomRotation(degrees=30),
             transforms.RandomAffine(degrees=0, shear=10),
             transforms.RandomPerspective(distortion_scale=0.4, p=0.5),
             transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
@@ -18,13 +18,13 @@ class FullRobustAugmentation:
     def __call__(self, img):
         img = self.base(img)
 
-        if random.random() < 0.3:
+        if random.random() < 0.8:
             img = self.random_motion_blur(img)
 
-        if random.random() < 0.3:
+        if random.random() < 0.8:
             img = self.random_occlusion(img)
 
-        if random.random() < 0.2:
+        if random.random() < 0.8:
             img = self.random_compression(img)
 
         return TF.to_tensor(img)
