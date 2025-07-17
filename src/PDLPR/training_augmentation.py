@@ -78,6 +78,8 @@ class CCPDPlateDataset(Dataset):
         self.image_files = [f for f in os.listdir(image_folder) if f.endswith('.jpg')]
         self.transform = transform if transform else transforms.Compose([
             transforms.Resize((48, 144)),
+            transforms.RandomRotation(degrees=10),  # ruota di ±10°
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
             transforms.ToTensor()
         ])
         self.max_len = max_len
