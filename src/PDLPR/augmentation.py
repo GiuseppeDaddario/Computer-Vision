@@ -18,21 +18,21 @@ class FullRobustAugmentation:
     def __call__(self, img):
         img = self.base(img)
 
-        if random.random() < 0.8:
-            img = self.random_motion_blur(img)
-        
-        if random.random() < 0.8:
-            factor = random.uniform(0.3, 1.8)  # per db
-            img = TF.adjust_brightness(img, factor)
+       
+        img = self.random_motion_blur(img)
+    
+    
+        factor = random.uniform(0.3, 1.8)  # per db
+        img = TF.adjust_brightness(img, factor)
 
-        if random.random() < 0.8:
-            img = self.random_occlusion(img)
+    
+        img = self.random_occlusion(img)
 
-        if random.random() < 0.8:
-            img = self.random_compression(img)
+    
+        img = self.random_compression(img)
 
-        if random.random() < 0.8:
-            img = self.add_fog(img) #per fn
+    
+        img = self.add_fog(img) #per fn
         
         return TF.to_tensor(img)
 
