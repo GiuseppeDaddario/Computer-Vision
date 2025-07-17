@@ -18,26 +18,37 @@ def convert_bbox(x1, y1, x2, y2):
     """
     Converts bbox coordinates in pixels (normalized), following the YOLO format.
     """
-    x_center = (x1 + x2) / 2.0 / IMG_WIDTH
-    y_center = (y1 + y2) / 2.0 / IMG_HEIGHT
-    width = abs(x2 - x1) / IMG_WIDTH
-    height = abs(y2 - y1) / IMG_HEIGHT
-    return x_center, y_center, width, height
+    bbox_width = abs(x2 - x1)
+    bbox_height = abs(y2 - y1)
+    x_center = x1 + bbox_width / 2.0
+    y_center = y1 + bbox_height / 2.0
+
+    # Normalizzazione
+    x_center /= IMG_WIDTH
+    y_center /= IMG_HEIGHT
+    bbox_width /= IMG_WIDTH
+    bbox_height /= IMG_HEIGHT
+
+    return x_center, y_center, bbox_width, bbox_height
 
 def parse_filename(fname):
     """
     Extracts bbox coordinates from the image file name and converts them in YOLO format
     """
-    parts = fname.split('-')
-    if len(parts) < 4:
+    fname = Path(fname)
+    parts = fname.stem.split('-')
+    if len(parts) != 7:
         return None
-    bbox_part = parts[2]
+
     try:
-        x1y1, x2y2 = bbox_part.split('_')
-        x1, y1 = map(int, x1y1.split('&'))
-        x2, y2 = map(int, x2y2.split('&'))
+        bbox_str = parts[2]
+        x1y1_str, x2y2_str = bbox_str.split('_')
+        x1, y1 = map(int, x1y1_str.split('&'))
+        x2, y2 = map(int, x2y2_str.split('&'))
+
         return convert_bbox(x1, y1, x2, y2)
-    except:
+    except Exception as e:
+        print(f"[WARN] Could not parse bbox from file '{fname}': {e}")
         return None
 
 def process_single_image(args):
