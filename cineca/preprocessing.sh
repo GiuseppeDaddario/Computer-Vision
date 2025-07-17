@@ -13,7 +13,7 @@
 module load cuda/12.1
 module load python/3.11
 
-source $SCRATCH/mnlp/bin/activate 
+source $SCRATCH/ComputerVision/bin/activate 
 
 cd $SLURM_SUBMIT_DIR 
 

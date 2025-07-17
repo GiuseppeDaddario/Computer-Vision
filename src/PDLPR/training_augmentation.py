@@ -12,6 +12,11 @@ from src.PDLPR.preprocessing import crop_plate, parse_box_from_filename
 from src.PDLPR.PDLPR import PDLPR
 
 
+import matplotlib.pyplot as plt
+
+
+
+
 # --- Costanti CCPD ---
 
 # --- CCPD CHARSET FIXED ---
@@ -78,8 +83,11 @@ class CCPDPlateDataset(Dataset):
         self.image_files = [f for f in os.listdir(image_folder) if f.endswith('.jpg')]
         self.transform = transform if transform else transforms.Compose([
             transforms.Resize((48, 144)),
-            transforms.RandomRotation(degrees=10),  # ruota di ±10°
-            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+            transforms.RandomRotation(degrees=30),  # ruota di ±10°
+            transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
+            transforms.RandomAffine(degrees=0, shear=10),
+            transforms.RandomPerspective(distortion_scale=0.4, p=0.7),
+            transforms.ColorJitter(brightness=0.6, contrast=0.6, saturation=0.3, hue=0.1),
             transforms.ToTensor()
         ])
         self.max_len = max_len
@@ -153,6 +161,10 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
         subprocess.check_call(["pip", "install", "tqdm"])
         from tqdm import tqdm
 
+    train_losses = []
+    val_losses = []
+
+
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
@@ -171,7 +183,12 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
             running_loss += loss.item()
             pbar.set_postfix({"batch_loss": loss.item()})
         avg_loss = running_loss / len(train_loader)
+        train_losses.append(avg_loss)
+        
         print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {avg_loss:.4f}")
+
+
+
 
         # VALIDATION
         model.eval()
@@ -186,9 +203,29 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
                     loss = loss_fn(output, targets)
                 val_loss += loss.item()
         avg_val_loss = val_loss / len(val_loader)
+        val_losses.append(avg_val_loss)
         print(f"Epoch [{epoch+1}/{num_epochs}] - Val Loss: {avg_val_loss:.4f}")
 
         torch.save(model.state_dict(), f"src/PDLPR/weights/pdlpr_epoch{epoch+1}.pth")
     
+
+
+
     torch.save(model.state_dict(), "src/PDLPR/weights/pdlpr_final.pth")
+
+
+    # --- Plot delle loss ---
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(1, num_epochs+1), train_losses, label='Training Loss', marker='o')
+    plt.plot(range(1, num_epochs+1), val_losses, label='Validation Loss', marker='x')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig("src/PDLPR/logs/loss_plot.png")
+    plt.close()
+    print("Salvato grafico delle loss in 'src/PDLPR/loss_plot.png'")
+
 
