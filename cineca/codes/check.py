@@ -59,8 +59,8 @@ def save_image_with_bbox(img_path, label_path, output_path):
     print(f"Saved image with bbox to {output_path}")
 
 if __name__ == "__main__":
-    image_dir = Path("/leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_challenge/images/test")
-    label_dir = Path("/leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_challenge/labels/test")
+    image_dir = Path("/leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_db/images/test")
+    label_dir = Path("/leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_db/labels/test")
 
     img_list = sorted(image_dir.glob("*.jpg"))
     if not img_list:

@@ -23,7 +23,7 @@ def convert_bbox(x1, y1, x2, y2):
     x_center = x1 + bbox_width / 2.0
     y_center = y1 + bbox_height / 2.0
 
-    # Normalizzazione
+    # Normalizing
     x_center /= IMG_WIDTH
     y_center /= IMG_HEIGHT
     bbox_width /= IMG_WIDTH

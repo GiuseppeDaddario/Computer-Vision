@@ -24,7 +24,7 @@ COLUMNS=80 PYTHONWARNINGS="ignore::FutureWarning" torchrun --nproc_per_node=4 tr
   --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5s.pt \
   --batch-size 512 \
   --img 640 \
-  --epochs 20 \
+  --epochs 2 \
   --optimizer Adam \
   --hyp /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/hyp.yaml \
   --cos-lr \
