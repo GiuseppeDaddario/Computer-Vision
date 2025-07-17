@@ -40,12 +40,12 @@ if __name__ == "__main__":
     print("PDLPR Training ...")
     train_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset_cv\CCPD2019\ccpd_base"
     #PDLPR_training(train_folder, batch_size=32, num_epochs=5)
-    #PDLPR_training_augmentation(train_folder, num_epochs=20, batch_size=32)
+    #PDLPR_training_augmentation(train_folder, num_epochs=3, batch_size=32)
 
 
 
     # ------ inference ------ #
 
     print("PDLPR Inference ...")
-    test_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset_cv\CCPD2019\ccpd_weather"
+    test_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset_cv\CCPD2019\ccpd_fn"
     PDLPR_inference(test_folder, batch_size=64)
