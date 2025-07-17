@@ -20,6 +20,10 @@ class FullRobustAugmentation:
 
         if random.random() < 0.8:
             img = self.random_motion_blur(img)
+        
+        if random.random() < 0.8:
+            factor = random.uniform(0.3, 1.8)  # per db
+            img = TF.adjust_brightness(img, factor)
 
         if random.random() < 0.8:
             img = self.random_occlusion(img)
@@ -27,11 +31,19 @@ class FullRobustAugmentation:
         if random.random() < 0.8:
             img = self.random_compression(img)
 
+        if random.random() < 0.8:
+            img = self.add_fog(img) #per fn
+        
         return TF.to_tensor(img)
 
     def random_motion_blur(self, img):
         kernel_size = random.choice([5, 9, 15])
         return img.filter(ImageFilter.GaussianBlur(radius=kernel_size / 5))
+
+    def add_fog(self, img):
+        fog = Image.new("RGB", img.size, color=(200, 200, 200))
+        return Image.blend(img, fog, alpha=random.uniform(0.1, 0.4))
+
 
     def random_occlusion(self, img):
         draw = img.copy()
