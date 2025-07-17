@@ -184,7 +184,7 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
             pbar.set_postfix({"batch_loss": loss.item()})
         avg_loss = running_loss / len(train_loader)
         train_losses.append(avg_loss)
-        val_losses.append(avg_val_loss)
+        
         print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {avg_loss:.4f}")
 
 
@@ -203,6 +203,7 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
                     loss = loss_fn(output, targets)
                 val_loss += loss.item()
         avg_val_loss = val_loss / len(val_loader)
+        val_losses.append(avg_val_loss)
         print(f"Epoch [{epoch+1}/{num_epochs}] - Val Loss: {avg_val_loss:.4f}")
 
         torch.save(model.state_dict(), f"src/PDLPR/weights/pdlpr_epoch{epoch+1}.pth")
