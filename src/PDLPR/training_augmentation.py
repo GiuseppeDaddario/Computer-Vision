@@ -74,7 +74,7 @@ tokenizer = SimplePlateTokenizer(charset)
 num_classes = tokenizer.vocab_size()
 seq_len = 8  # lunghezza massima targa CCPD
 
-from augmentation import FullRobustAugmentation
+from src.PDLPR.augmentation import FullRobustAugmentation
 
 # --- Dataset CCPD ---
 class CCPDPlateDataset(Dataset):

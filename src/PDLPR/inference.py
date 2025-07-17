@@ -21,7 +21,7 @@ def PDLPR_inference(dataset_folder, batch_size=64):
         num_classes=num_classes,
         seq_len=seq_len
     ).to(device)
-    model.load_state_dict(torch.load("src\PDLPR\weights\pdlpr_epoch46.pth", map_location=device))
+    model.load_state_dict(torch.load("src\PDLPR\weights\pdlpr_final.pth", map_location=device))
     model.eval()
 
     def decode_plate_pred(seq):
