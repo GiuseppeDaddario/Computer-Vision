@@ -73,23 +73,17 @@ class SimplePlateTokenizer:
 tokenizer = SimplePlateTokenizer(charset)
 num_classes = tokenizer.vocab_size()
 seq_len = 8  # lunghezza massima targa CCPD
-#print("[INFO] Charset:", charset)
-#print("[INFO] num_classes:", num_classes)
+
+from augmentation import FullRobustAugmentation
 
 # --- Dataset CCPD ---
 class CCPDPlateDataset(Dataset):
     def __init__(self, image_folder, transform=None, max_len=8):
         self.image_folder = image_folder
         self.image_files = [f for f in os.listdir(image_folder) if f.endswith('.jpg')]
-        self.transform = transform if transform else transforms.Compose([
-            transforms.Resize((48, 144)),
-            transforms.RandomRotation(degrees=30),  # ruota di ±10°
-            transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
-            transforms.RandomAffine(degrees=0, shear=10),
-            transforms.RandomPerspective(distortion_scale=0.4, p=0.7),
-            transforms.ColorJitter(brightness=0.6, contrast=0.6, saturation=0.3, hue=0.1),
-            transforms.ToTensor()
-        ])
+        self.transform = transform if transform else FullRobustAugmentation()
+
+
         self.max_len = max_len
     def __len__(self):
         return len(self.image_files)
