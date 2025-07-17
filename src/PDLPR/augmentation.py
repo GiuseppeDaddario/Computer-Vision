@@ -15,26 +15,29 @@ class FullRobustAugmentation:
             transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
         ])
 
-    def __call__(self, img):
-        img = self.base(img)
 
        
-        img = self.random_motion_blur(img)
-    
-    
-        factor = random.uniform(0.3, 1.8)  # per db
-        img = TF.adjust_brightness(img, factor)
+    def __call__(self, img):
+        img = self.base(img)  # geometrie e jitter
 
-    
-        img = self.random_occlusion(img)
+        if random.random() < 0.5:
+            img = self.random_motion_blur(img)
 
-    
-        img = self.random_compression(img)
+        if random.random() < 0.5:
+            factor = random.uniform(0.3, 1.8)
+            img = TF.adjust_brightness(img, factor)
 
-    
-        img = self.add_fog(img) #per fn
-        
+        if random.random() < 0.5:
+            img = self.random_occlusion(img)
+
+        if random.random() < 0.5:
+            img = self.random_compression(img)
+
+        if random.random() < 0.5:
+            img = self.add_fog(img)
+
         return TF.to_tensor(img)
+
 
     def random_motion_blur(self, img):
         kernel_size = random.choice([5, 9, 15])

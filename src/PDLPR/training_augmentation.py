@@ -122,7 +122,7 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
     dataset = CCPDPlateDataset(image_folder)
 
     # Suddividi il dataset in 80% train e 20% val
-    train_size = int(0.8 * len(dataset))
+    train_size = int(0.8 * len(dataset)) #qua dovrei rimettere 0.8
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
@@ -183,7 +183,7 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
 
 
 
-
+        
         # VALIDATION
         model.eval()
         val_loss = 0.0
@@ -199,6 +199,7 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
         avg_val_loss = val_loss / len(val_loader)
         val_losses.append(avg_val_loss)
         print(f"Epoch [{epoch+1}/{num_epochs}] - Val Loss: {avg_val_loss:.4f}")
+        
 
         torch.save(model.state_dict(), f"src/PDLPR/weights/pdlpr_epoch{epoch+1}.pth")
     
