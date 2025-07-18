@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -13,7 +13,7 @@ from src.PDLPR.PDLPR import PDLPR
 
 
 import matplotlib.pyplot as plt
-
+from src.PDLPR.augmentation import FullRobustAugmentation
 
 
 
@@ -74,7 +74,7 @@ tokenizer = SimplePlateTokenizer(charset)
 num_classes = tokenizer.vocab_size()
 seq_len = 8  # lunghezza massima targa CCPD
 
-from src.PDLPR.augmentation import FullRobustAugmentation
+
 
 # --- Dataset CCPD ---
 class CCPDPlateDataset(Dataset):
@@ -144,7 +144,7 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     loss_fn = nn.CrossEntropyLoss(ignore_index=0)
-    scaler = GradScaler()
+    scaler = GradScaler(device = "cuda")
 
     
 
@@ -167,7 +167,7 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
             images = images.to(device)
             targets = targets.to(device)
             optimizer.zero_grad()
-            with autocast():
+            with autocast(device_type="cuda"):
                 output = model(images)
                 output = output.permute(0, 2, 1)
                 loss = loss_fn(output, targets)
@@ -191,7 +191,7 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
             for images, targets in tqdm(val_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Val]", unit="batch"):
                 images = images.to(device)
                 targets = targets.to(device)
-                with autocast():
+                with autocast(device_type="cuda"):
                     output = model(images)
                     output = output.permute(0, 2, 1)
                     loss = loss_fn(output, targets)
