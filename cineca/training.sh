@@ -19,16 +19,18 @@ source $SCRATCH/ComputerVision/bin/activate
 
 cd /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5
 
-COLUMNS=80 PYTHONWARNINGS="ignore::FutureWarning" torchrun --nproc_per_node=4 train.py \
+COLUMNS=80 PYTHONWARNINGS="ignore::FutureWarning" \
+python -m torch.distributed.run --nproc_per_node=4 train.py \
   --data /leonardo/home/userexternal/gdaddari/Computer-Vision/dataset/ccpd_2019.yaml \
   --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5s.pt \
-  --batch-size 512 \
+  --batch-size 256 \
   --img 640 \
-  --epochs 2 \
+  --epochs 50 \
   --optimizer Adam \
   --hyp /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/hyp.yaml \
   --cos-lr \
   --project /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs \
   --name train \
   --cache ram \
+  --device 0,1,2,3 \
   --workers 8
