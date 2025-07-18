@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+#import torch.nn.functional as F
 from src.PDLPR.igfe import CNNBlock
 from src.PDLPR.encoder import PositionalEncoding2D
 
