@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 #from torch.nn.utils.rnn import pad_sequence
 
-from src.PDLPR.preprocessing import crop_plate, parse_box_from_filename
+from src.PDLPR.preprocessing import crop_plate
 from src.PDLPR.PDLPR import PDLPR
 
 
