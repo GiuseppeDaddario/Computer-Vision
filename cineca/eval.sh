@@ -22,7 +22,7 @@ cd /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5
 # Esegui rilevamento
 COLUMNS=80 PYTHONWARNINGS="ignore::FutureWarning" python detect.py \
   --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs/train/weights/best.pt \
-  --source /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_challenge/images/test \
+  --source /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_db/images/test \
   --img 640 \
   --conf 0.25 \
   --iou 0.45 \
@@ -30,5 +30,5 @@ COLUMNS=80 PYTHONWARNINGS="ignore::FutureWarning" python detect.py \
   --save-txt \
   --save-conf \
   --project /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs \
-  --name detect \
+  --name detect-db \
   --exist-ok

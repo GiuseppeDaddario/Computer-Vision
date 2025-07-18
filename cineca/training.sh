@@ -25,7 +25,7 @@ python -m torch.distributed.run --nproc_per_node=4 train.py \
   --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5s.pt \
   --batch-size 256 \
   --img 640 \
-  --epochs 50 \
+  --epochs 25 \
   --optimizer Adam \
   --hyp /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/hyp.yaml \
   --cos-lr \
