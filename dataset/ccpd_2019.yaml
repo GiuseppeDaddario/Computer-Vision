@@ -3,8 +3,8 @@ train: /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_base
 val: /leonardo_scratch/large/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_base/images/val
 
 # just for DEBUG on the toy dataset
-#train: /leonardo/home/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_base/images/train
-#val: /leonardo/home/userexternal/gdaddari/dataset/CCPD_YOLO/ccpd_base/images/val
+#train: ../../../dataset/CCPD_YOLO/ccpd_base/images/train
+#val: ../../../dataset/CCPD_YOLO/ccpd_base/images/val
 
 # Classes
 nc: 1
