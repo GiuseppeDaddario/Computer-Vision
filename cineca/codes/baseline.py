@@ -249,40 +249,52 @@ class FullRobustAugmentation:
         return Image.open(buffer)
 
 class BaselineModel(nn.Module):
-    def __init__(self, num_classes_list, pretrained=True):
+    def __init__(self, num_classes_list, mode="detection", resnet_weights_path=None):
         super().__init__()
 
-        # Shared backbone
-        resnet = models.resnet34(pretrained=pretrained)
-        self.backbone = nn.Sequential(*list(resnet.children())[:-2])  # Fino a conv5_x
-        self.pool = nn.AdaptiveAvgPool2d((1, 1))
-
-        # Detection head
-        self.regressor = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 4),
-            nn.Sigmoid()
-        )
-
-        # Recognition head (multi-head classifier)
-        self.classifiers = nn.ModuleList([
-            nn.Linear(512, n_classes) for n_classes in num_classes_list
-        ])
-
-    def forward_backbone(self, x):
-        x = self.backbone(x)
-        x = self.pool(x)
-        return x.view(x.size(0), -1)  # [B, 512]
+        # Detection backbone
+        if mode == "detection":
+            if resnet_weights_path:
+                resnet = models.resnet34(weights=None)     
+                state_dict = torch.load(resnet_weights_path, map_location="cpu")
+                resnet.load_state_dict(state_dict)
+            else:
+                resnet = models.resnet34(weights="DEFAULT")
+            self.backbone = nn.Sequential(*list(resnet.children())[:-2])  
+            self.pool = nn.AdaptiveAvgPool2d((1, 1))  
+            self.regressor = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Linear(256, 4),
+                nn.Sigmoid()  
+            )
+            # Recognition backbone
+        elif mode == "recognition":
+            if resnet_weights_path:
+                resnet = models.resnet34(weights=None)
+                state_dict = torch.load(resnet_weights_path, map_location="cpu")
+                resnet.load_state_dict(state_dict)
+            else:
+                resnet = models.resnet34(weights="DEFAULT")
+            self.feature_extractor = nn.Sequential(*list(resnet.children())[:-1])  
+            self.classifiers = nn.ModuleList([
+                nn.Linear(512, n_classes) for n_classes in num_classes_list
+            ])
+        else:
+            raise ValueError("mode not supported. Use either detection or recognition.")
 
     def forward_detection(self, x):
-        x = self.forward_backbone(x)
-        return self.regressor(x)
+        x = self.backbone(x)
+        x = self.pool(x)
+        x = self.regressor(x)
+        return x
 
     def forward_recognition(self, x):
-        x = self.forward_backbone(x)
-        return [clf(x) for clf in self.classifiers]
+        x = self.feature_extractor(x)
+        x = x.view(x.size(0), -1)
+        outputs = [clf(x) for clf in self.classifiers]
+        return outputs
 
     def forward(self, x, mode=None):
         """
@@ -293,8 +305,8 @@ class BaselineModel(nn.Module):
         elif mode == 'recognition':
             return self.forward_recognition(x)
         else:
-            raise ValueError(f"Unsupported mode: {mode}")
-  
+            raise ValueError("mode not supported. Use either detection or recognition.")
+
 class Metrics:
     def __init__(self, task):
         self.task = task
@@ -368,22 +380,7 @@ class Trainer:
         self.model_path = model.model_path if hasattr(model, "model_path") else "" 
 
         self.set_task(task, num_classes_list)
-
-    def plot_epoch_losses(self, losses, title, save_dir):
-        os.makedirs(save_dir, exist_ok=True)
-        plt.figure(figsize=(10, 5))
-        plt.plot(range(1, len(losses)+1), losses, label='Loss', marker='o')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.title(title)
-        plt.grid(True)
-        plt.legend()
-        plt.tight_layout()
-        save_path = os.path.join(save_dir, f"{title.replace(' ', '_').lower()}.png")
-        plt.savefig(save_path)
-        plt.close()
-        print(f"Loss graph saved in: '{save_path}'")
-
+        
     def set_task(self, task, num_classes_list=None):
         self.task = task
         if task == "detection":
@@ -396,6 +393,23 @@ class Trainer:
             self.criterion = None  # Reset
         else:
             raise ValueError(f"Task not allowed: {task}")
+
+    def plot_epoch_losses(self, train_losses, val_losses, title, save_dir):
+        os.makedirs(save_dir, exist_ok=True)
+        plt.figure(figsize=(10, 5))
+        plt.plot(range(1, len(train_losses)+1), train_losses, label='Train Loss', marker='o')
+        if val_losses:
+            plt.plot(range(1, len(val_losses)+1), val_losses, label='Val Loss', marker='x')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title(title)
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        save_path = os.path.join(save_dir, f"{title.replace(' ', '_').lower()}.png")
+        plt.savefig(save_path)
+        plt.close()
+        print(f"Loss graph saved in: '{save_path}'")
     
     def train(self, dataloader=None, epochs=10, batch_size=50, optimizer="Adam",lr0=1e-3,lrf=1e-5, cos_lr=True,project="runs/train", name="lp_detection", cache="ram"):
         if self.model_type == "yolov5":
@@ -405,8 +419,13 @@ class Trainer:
         else:
             return self._train_baseline(dataloader, epochs)
 
-    def _train_baseline(self, dataloader, epochs):
+    def _train_baseline(self, dataloader, epochs, val_dataloader=None):
         self.model.train()
+        best_loss = float('inf')
+        best_model_path = f"models/baseline/best_{self.task}_model.pth"
+        train_losses = []
+        val_losses = []
+
         for epoch in range(epochs):
             total_loss = 0
             for images, targets in tqdm(dataloader, desc=f"[{self.task}] Epoch {epoch+1}/{epochs}"):
@@ -427,28 +446,50 @@ class Trainer:
                 loss.backward()
                 self.optimizer.step()
                 total_loss += loss.item()
-            avg_loss = total_loss / len(dataloader)
-            print(f"Epoch {epoch+1} - Loss: {avg_loss:.4f}")
-            self.losses.append(avg_loss)
-        self.plot_epoch_losses(self.losses, f"{self.task.capitalize()} Loss", "results")
+            avg_train_loss = total_loss / len(dataloader)
+            train_losses.append(avg_train_loss)
+            print(f"Epoch {epoch+1} - Loss: {avg_train_loss:.4f}")
+            
+            #Validation
+            avg_val_loss = None
+            if val_dataloader:
+                self.model.eval()
+                total_val_loss = 0
+                with torch.no_grad():
+                    for images, targets in val_dataloader:
+                        images = images.to(self.device)
+
+                        if self.task == "detection":
+                            bboxes = targets.to(self.device)
+                            norm = torch.tensor([IMG_WIDTH, IMG_HEIGHT, IMG_WIDTH, IMG_HEIGHT]).to(self.device)
+                            bboxes = bboxes / norm
+                            preds = self.model(images, 'detection')
+                            loss = self.criterion(preds, bboxes)
+
+                        elif self.task == "recognition":
+                            labels = targets.to(self.device)
+                            outputs = self.model(images, 'recognition')
+                            loss = sum(crit(outputs[i], labels[:, i]) for i, crit in enumerate(self.criterions))
+
+                        total_val_loss += loss.item()
+
+                avg_val_loss = total_val_loss / len(val_dataloader)
+                val_losses.append(avg_val_loss)
+                print(f"Epoch {epoch+1} - Val Loss: {avg_val_loss:.4f}")
+                self.model.train()
+
+        # Saving the best model
+        current_loss = avg_val_loss if avg_val_loss is not None else avg_train_loss
+        if current_loss < best_loss:
+            best_loss = current_loss
+            torch.save(self.model.state_dict(), best_model_path)
+            print(f"Best model saved. Loss: {best_loss:.4f}")
+
+        self.plot_epoch_losses(train_losses, val_losses, f"{self.task.capitalize()} Loss", "models/baseline/train")
         return self.model
 
     def _train_yolov5(self, epochs=25, batch_size=50, optimizer="Adam", lr0=1e-3, lrf=1e-5, cos_lr=True, project="runs/train", name="lp_detection", cache="ram"):
-        YOLOv5_training(
-            weights=self.model_path,
-            data=DATASET_PATH_YOLO,
-            epochs=epochs,
-            batch_size=batch_size,
-            imgsz=640,
-            optimizer=optimizer,
-            lr0=lr0,
-            lrf=lrf,
-            cos_lr=cos_lr,
-            project=project,
-            name=name,
-            cache=cache
-        )
-        return self.model
+        pass
 
     def _train_pdlpr(self, dataloader, epochs):
         self.model.train()
@@ -489,7 +530,7 @@ class Trainer:
         # Plotting
         self.plot_epoch_losses(train_losses, "PDLPR Loss", "models/PDLPR/logs")
         return self.model
-    
+
 class Evaluator:
     def __init__(self, model, device):
         self.model = model.to(device)
@@ -523,27 +564,32 @@ class Evaluator:
 
 
 if __name__ == "__main__":
-    # Prepara dataset
+    # Datasets
     train_dataset_det = CCPDDataset(TRAINING_PATH, transform=transform_detection, task='detection')
     train_loader_det = DataLoader(train_dataset_det, batch_size=32, shuffle=True)
+    print(f"Train detection: {len(train_dataset_det)} images")
 
     train_dataset_rec = CCPDDataset(TRAINING_PATH, transform=transform_recognition, task='recognition')
     train_loader_rec = DataLoader(train_dataset_rec, batch_size=32, shuffle=True)
+    print(f"Train recognition: {len(train_dataset_rec)} images")
 
     test_dataset_det = CCPDDataset(TEST_PATH, transform=transform_detection, task='detection')
     test_loader_det = DataLoader(test_dataset_det, batch_size=32, shuffle=True)
+    print(f"Test detection: {len(test_dataset_det)} images")
 
     test_dataset_rec = CCPDDataset(TEST_PATH, transform=transform_recognition, task='recognition')
     test_loader_rec = DataLoader(test_dataset_rec, batch_size=32, shuffle=True)
+    print(f"Test recognition: {len(test_dataset_rec)} images")
 
-    # Costanti
+
+
+    # Cnst
     num_classes_list = [len(PROVINCES), len(ALPHABETS)] + [len(ADS)] * 5 
 
     # -------------------------
     # Training detection model
     # -------------------------
-    det_model = BaselineModel(num_classes_list=num_classes_list)
-    det_model.load_state_dict(torch.load("models/baseline/resnet34_detection_best.pth"))
+    det_model = BaselineModel(num_classes_list=num_classes_list, resnet_weights_path="models/baseline/resnet34.pth", mode="detection")
     det_trainer = Trainer(det_model, task="detection", device=DEVICE)
     det_model = det_trainer.train(train_loader_det, epochs=20)
 
@@ -551,9 +597,8 @@ if __name__ == "__main__":
     # -------------------------
     # Training recognition model
     # -------------------------
-    rec_model = BaselineModel(num_classes_list=num_classes_list)
-    rec_model.load_state_dict(torch.load("models/baseline/resnet34_recognition_best.pth"))
-    rec_trainer = Trainer(rec_model, task="recognition", device=DEVICE)
+    rec_model = BaselineModel(num_classes_list=num_classes_list, resnet_weights_path="models/baseline/resnet34.pth", mode="recognition")
+    rec_trainer = Trainer(rec_model, num_classes_list=num_classes_list, task="recognition", device=DEVICE)
     rec_model = rec_trainer.train(train_loader_rec, epochs=20)
 
 
