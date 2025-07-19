@@ -93,7 +93,10 @@ def cleanup_ddp():
 rank = setup_ddp()
 DEVICE = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
 
-
+def disp(msg):
+    if rank == 0:
+        print(msg)
+    
 
 # -------- Class definitions --------- #
 class CCPDImage:
@@ -431,7 +434,7 @@ class Trainer:
         save_path = os.path.join(save_dir, f"{title.replace(' ', '_').lower()}.png")
         plt.savefig(save_path)
         plt.close()
-        print(f"Loss graph saved in: '{save_path}'")
+        disp(f"Loss graph saved in: '{save_path}'")
     
     def train(self, dataloader=None, epochs=10, batch_size=50, optimizer="Adam",lr0=1e-3,lrf=1e-5, cos_lr=True,project="runs/train", name="lp_detection", cache="ram"):
         if self.model_type == "yolov5":
@@ -470,7 +473,7 @@ class Trainer:
                 total_loss += loss.item()
             avg_train_loss = total_loss / len(dataloader)
             train_losses.append(avg_train_loss)
-            print(f"Epoch {epoch+1} - Loss: {avg_train_loss:.4f}")
+            disp(f"Epoch {epoch+1} - Loss: {avg_train_loss:.4f}")
             
             #Validation
             avg_val_loss = None
@@ -497,7 +500,7 @@ class Trainer:
 
                 avg_val_loss = total_val_loss / len(val_dataloader)
                 val_losses.append(avg_val_loss)
-                print(f"Epoch {epoch+1} - Val Loss: {avg_val_loss:.4f}")
+                disp(f"Epoch {epoch+1} - Val Loss: {avg_val_loss:.4f}")
                 self.model.train()
 
         # Saving the best model
@@ -505,7 +508,7 @@ class Trainer:
         if current_loss < best_loss:
             best_loss = current_loss
             torch.save(self.model.state_dict(), best_model_path)
-            print(f"Best model saved. Loss: {best_loss:.4f}")
+            disp(f"Best model saved. Loss: {best_loss:.4f}")
 
         self.plot_epoch_losses(train_losses, val_losses, f"{self.task.capitalize()} Loss", "models/baseline/train")
         return self.model
@@ -542,7 +545,7 @@ class Trainer:
 
             avg_loss = running_loss / len(dataloader)
             train_losses.append(avg_loss)
-            print(f"Epoch [{epoch+1}/{epochs}] - Train Loss: {avg_loss:.4f}")
+            disp(f"Epoch [{epoch+1}/{epochs}] - Train Loss: {avg_loss:.4f}")
 
             torch.save(self.model.state_dict(), f"models/PDLPR/weights/pdlpr_epoch{epoch+1}.pth")
 
@@ -602,24 +605,20 @@ def main():
     train_dataset_det = CCPDDataset(TRAINING_PATH, transform=transform_detection, task='detection')
     train_sampler_det = DistributedSampler(train_dataset_det)
     train_loader_det = DataLoader(train_dataset_det, batch_size=256, sampler=train_sampler_det, num_workers=8)
-    if rank == 0:
-        print(f"Train detection: {len(train_dataset_det)} images")
+    disp(f"Train detection: {len(train_dataset_det)} images")
 
     train_dataset_rec = CCPDDataset(TRAINING_PATH, transform=transform_recognition, task='recognition')
     train_sampler_rec = DistributedSampler(train_dataset_rec)
     train_loader_rec = DataLoader(train_dataset_rec, batch_size=256, sampler=train_sampler_rec, num_workers=8)
-    if rank == 0:
-        print(f"Train recognition: {len(train_dataset_rec)} images")
+    disp(f"Train recognition: {len(train_dataset_rec)} images")
 
     test_dataset_det = CCPDDataset(TEST_PATH, transform=transform_detection, task='detection')
     test_loader_det = DataLoader(test_dataset_det, batch_size=256, shuffle=False, num_workers=8)
-    if rank == 0:
-        print(f"Test detection: {len(test_dataset_det)} images")
+    disp(f"Test detection: {len(test_dataset_det)} images")
 
     test_dataset_rec = CCPDDataset(TEST_PATH, transform=transform_recognition, task='recognition')
     test_loader_rec = DataLoader(test_dataset_rec, batch_size=256, shuffle=False, num_workers=8)
-    if rank == 0:
-        print(f"Test recognition: {len(test_dataset_rec)} images")
+    disp(f"Test recognition: {len(test_dataset_rec)} images")
 
 
 
@@ -647,14 +646,14 @@ def main():
     # -------------------------
     evaluator = Evaluator(det_model, device=DEVICE)
     metrics_det = evaluator.evaluate(test_loader_det, task="detection")
-    print("Detection Results:", metrics_det)
+    disp("Detection Results:", metrics_det)
 
     # -------------------------
     # Evaluation recognition
     # -------------------------
     evaluator = Evaluator(rec_model, device=DEVICE)
     metrics_rec = evaluator.evaluate(test_loader_rec, task="recognition")
-    print("Recognition Results:", metrics_rec)
+    disp("Recognition Results:", metrics_rec)
 
     cleanup_ddp()
 if __name__ == "__main__":
