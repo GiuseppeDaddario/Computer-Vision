@@ -23,6 +23,10 @@ import torch.optim as optim
 from torch import autocast
 from torch.amp import GradScaler
 from torch.utils.data import Dataset, DataLoader, random_split
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import get_rank, is_initialized, barrier
+from torch.utils.data.distributed import DistributedSampler
 
 # -------- Torchvision --------- #
 import torchvision.transforms as T
@@ -34,9 +38,11 @@ os.environ['WANDB_MODE'] = 'disabled'
 
 # -------- General paths --------- #
 DATASET_PATH = "dataset/CCPD2019"
-TRAINING_PATH = "dataset/CCPD2019/ccpd_base"
+#TRAINING_PATH = "dataset/CCPD2019/ccpd_base"
+TRAINING_PATH = os.path.join(os.environ["SCRATCH"], "dataset/CCPD2019/ccpd_base")
 TEST_DIR = "ccpd_challenge"
-TEST_PATH = f"dataset/CCPD_YOLO/{TEST_DIR}/images/test" 
+#TEST_PATH = f"$SCRATCH/dataset/CCPD_YOLO/{TEST_DIR}/images/test"
+TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", TEST_DIR, "images", "test")
 
 # -------- YOLO paths --------- #
 DATASET_PATH_YOLO = "dataset/CCPD_YOLO"
@@ -72,8 +78,22 @@ transform_recognition = transforms.Compose([
     transforms.ToTensor(),
 ])
 
+
 # -------- GPU support --------- #
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def setup_ddp():
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank % torch.cuda.device_count())
+    return rank
+
+def cleanup_ddp():
+    dist.destroy_process_group()
+
+rank = setup_ddp()
+DEVICE = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
+
+
 
 # -------- Class definitions --------- #
 class CCPDImage:
@@ -359,7 +379,7 @@ class Metrics:
     def compute(self):
         results = {}
         if self.task == "detection":
-            results['IoU'] = np.mean(self.total_iou)
+            results['IoU'] = float(np.mean(self.total_iou))
         elif self.task == "recognition":
             results['Accuracy'] = self.correct_chars / self.total_chars
             if self.total_chars > 0:
@@ -370,6 +390,8 @@ class Metrics:
 class Trainer:
     def __init__(self, model, task, device, lr=1e-3, num_classes_list=None):
         self.model = model.to(device)
+        if dist.is_initialized():
+            self.model = DDP(self.model, device_ids=[device])
         self.task = task
         self.device = device
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
@@ -534,15 +556,20 @@ class Trainer:
 class Evaluator:
     def __init__(self, model, device):
         self.model = model.to(device)
+        if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
+            self.model = self.model.module
         self.device = device
         self.model_type = model.model_type if hasattr(model, "model_type") else "baseline"
+        
 
     @torch.no_grad()
     def evaluate(self, dataloader, task):
         self.model.eval()
         metrics = Metrics(task=task)
+        is_main_process = not is_initialized() or get_rank() == 0
+        iterator = tqdm(dataloader, desc=f"[Evaluating {task}]") if is_main_process else dataloader
 
-        for images, targets in tqdm(dataloader, desc=f"[Evaluating {task}]"):
+        for images, targets in iterator:
             start_time = time.time()
             images = images.to(self.device)
 
@@ -560,26 +587,39 @@ class Evaluator:
             end_time = time.time()
             metrics.update_time(start_time, end_time, images.size(0))
 
-        return metrics.compute()
+        if is_initialized():
+            barrier()
 
+        # Solo il rank 0 ritorna metriche
+        if is_main_process:
+            return metrics.compute()
+        else:
+            return None
 
-if __name__ == "__main__":
+def main():
+
     # Datasets
     train_dataset_det = CCPDDataset(TRAINING_PATH, transform=transform_detection, task='detection')
-    train_loader_det = DataLoader(train_dataset_det, batch_size=32, shuffle=True)
-    print(f"Train detection: {len(train_dataset_det)} images")
+    train_sampler_det = DistributedSampler(train_dataset_det)
+    train_loader_det = DataLoader(train_dataset_det, batch_size=256, sampler=train_sampler_det, num_workers=8)
+    if rank == 0:
+        print(f"Train detection: {len(train_dataset_det)} images")
 
     train_dataset_rec = CCPDDataset(TRAINING_PATH, transform=transform_recognition, task='recognition')
-    train_loader_rec = DataLoader(train_dataset_rec, batch_size=32, shuffle=True)
-    print(f"Train recognition: {len(train_dataset_rec)} images")
+    train_sampler_rec = DistributedSampler(train_dataset_rec)
+    train_loader_rec = DataLoader(train_dataset_rec, batch_size=256, sampler=train_sampler_rec, num_workers=8)
+    if rank == 0:
+        print(f"Train recognition: {len(train_dataset_rec)} images")
 
     test_dataset_det = CCPDDataset(TEST_PATH, transform=transform_detection, task='detection')
-    test_loader_det = DataLoader(test_dataset_det, batch_size=32, shuffle=True)
-    print(f"Test detection: {len(test_dataset_det)} images")
+    test_loader_det = DataLoader(test_dataset_det, batch_size=256, shuffle=False, num_workers=8)
+    if rank == 0:
+        print(f"Test detection: {len(test_dataset_det)} images")
 
     test_dataset_rec = CCPDDataset(TEST_PATH, transform=transform_recognition, task='recognition')
-    test_loader_rec = DataLoader(test_dataset_rec, batch_size=32, shuffle=True)
-    print(f"Test recognition: {len(test_dataset_rec)} images")
+    test_loader_rec = DataLoader(test_dataset_rec, batch_size=256, shuffle=False, num_workers=8)
+    if rank == 0:
+        print(f"Test recognition: {len(test_dataset_rec)} images")
 
 
 
@@ -615,3 +655,8 @@ if __name__ == "__main__":
     evaluator = Evaluator(rec_model, device=DEVICE)
     metrics_rec = evaluator.evaluate(test_loader_rec, task="recognition")
     print("Recognition Results:", metrics_rec)
+
+    cleanup_ddp()
+if __name__ == "__main__":
+    main()
+    

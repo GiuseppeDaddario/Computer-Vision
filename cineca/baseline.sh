@@ -19,4 +19,4 @@ source $SCRATCH/ComputerVision/bin/activate
 
 cd $SLURM_SUBMIT_DIR 
 
-python cineca/codes/baseline.py
+srun python -m torch.distributed.launch --nproc_per_node=4 cineca/codes/baseline.py
