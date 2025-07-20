@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Crea una directory di destinazione
-MODEL_DIR="models"
+MODEL_DIR="models/baseline"
 mkdir -p $MODEL_DIR
 
 # Usa Python per scaricare i pesi pre-addestrati di ResNet34

@@ -41,7 +41,7 @@ os.environ['WANDB_MODE'] = 'disabled'
 DATASET_PATH = "dataset/CCPD2019"
 #TRAINING_PATH = "dataset/CCPD2019/ccpd_base"
 TRAINING_PATH = os.path.join(os.environ["SCRATCH"], "dataset/CCPD2019/ccpd_base")
-TEST_DIR = "ccpd_weather"
+TEST_DIR = "ccpd_blur"
 #TEST_PATH = f"$SCRATCH/dataset/CCPD_YOLO/{TEST_DIR}/images/test"
 TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", TEST_DIR, "images", "test")
 
@@ -50,9 +50,9 @@ DATASET_PATH_YOLO = "dataset/CCPD_YOLO"
 TRAINING_CONFIG_YOLO = "dataset/ccpd_2019.yaml"
 PROJECT_PATH = '/leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs'
 YOLO_MODEL_PATH = 'src/YOLO/runs/train/weights/best.pt'
-
+YOLO_IMG_SIZE = 640
 transform_yolo = T.Compose([
-    T.Resize((640, 640))
+    T.Resize((YOLO_IMG_SIZE, YOLO_IMG_SIZE))
 ])
 
 # -------- Dataset Globals --------- #
@@ -84,6 +84,26 @@ transform_recognition = T.Compose([
 ])
 
 
+# -------- PDLPR specific globals --------- #
+class SimplePlateTokenizer:
+    def __init__(self, charset):
+        self.char2idx = {c: i + 1 for i, c in enumerate(charset)}  # 0 = PAD
+        self.char2idx['<PAD>'] = 0
+        self.idx2char = {i: c for c, i in self.char2idx.items()}
+    def encode(self, text):
+        for c in text:
+            if c not in self.char2idx:
+                print(f"[Tokenizer Warning] Carattere '{c}' non nel charset! Verrà codificato come PAD (0)")
+        return [self.char2idx.get(c, 0) for c in text]
+    def decode(self, indices):
+        return ''.join([self.idx2char.get(i, '') for i in indices if i != 0])
+    def vocab_size(self):
+        return len(self.char2idx)
+
+tokenizer = SimplePlateTokenizer(charset)
+num_classes = tokenizer.vocab_size()
+seq_len = 8  # maximum car plate length
+
 # -------- GPU support --------- #
 def setup_ddp():
     rank = int(os.environ["RANK"])
@@ -104,6 +124,11 @@ def disp(msg):
     
 
 # -------- Class definitions --------- #
+class YOLOv5():
+    pass
+class PDLPR():
+    pass
+    
 class CCPDImage:
     def __init__(self, filename):
         self.filename = Path(filename)
@@ -243,9 +268,14 @@ class CCPDDataset(Dataset):
                 image = self.transform(image)
             if self.model == "baseline":
                 bbox = img_obj.bbox_normalized_baseline
+                plate_code = torch.tensor(img_obj.plate_code)
             elif self.model == "yolov5":
                 bbox = img_obj.bbox_yolo
-            plate_code = torch.tensor(img_obj.plate_code)
+                plate_str = img_obj.plate_str
+                encoded_plate = tokenizer.encode(plate_str)
+                padded_encoded_plate = encoded_plate + [0] * (seq_len - len(encoded_plate))
+                plate_code = torch.tensor(padded_encoded_plate[:seq_len])
+            
             return image, bbox, plate_code
 
         else:
@@ -316,7 +346,7 @@ class FullRobustAugmentation:
         return Image.open(buffer)
 
 class BaselineModel(nn.Module):
-    def __init__(self, num_classes_list, mode="detection", loading_from_path=None, resnet_weights_path="models/baseline/resnet34.pth"):
+    def __init__(self, num_classes_list, mode="detection", loading_from_path=None, resnet_weights_path=None):
         super().__init__()
 
         # Detection backbone
@@ -630,19 +660,21 @@ class Trainer:
         self.plot_epoch_losses(train_losses, "PDLPR Loss", "models/PDLPR/logs")
         return self.model
 
+
 class Evaluator:
     def __init__(self, det_model,rec_model, device):
         self.det_model = det_model.to(device)
         self.rec_model = rec_model.to(device)
         self.device = device
+        
         self.transform_recognition = transform_recognition
+        self.transform_detection = transform_detection
 
         if isinstance(self.det_model, torch.nn.parallel.DistributedDataParallel):
             self.det_model = self.det_model.module
         if isinstance(self.rec_model, torch.nn.parallel.DistributedDataParallel):
             self.rec_model = self.rec_model.module
         
-
     @torch.no_grad()
     def evaluate(self, dataloader, task):
         self.det_model.eval()
@@ -650,49 +682,90 @@ class Evaluator:
 
         metrics = Metrics(task="end_to_end")
         is_main_process = not is_initialized() or get_rank() == 0
-        iterator = tqdm(dataloader, desc=f"[Evaluating end-to-end]") if is_main_process else dataloader
+        iterator = tqdm(enumerate(dataloader), desc=f"[Evaluating end-to-end]", total=len(dataloader)) if is_main_process else enumerate(dataloader)
 
-        for images, gt_bboxes, plate_labels in iterator:
+        for batch_idx, (images, gt_bboxes, plate_labels) in iterator:
             start_time = time.time()
             images = images.to(self.device)
-            gt_bboxes = gt_bboxes.to(self.device)
             
-            # detection part
-            pred_bboxes_norm = self.det_model(images, mode='detection')
-            #Normalizing
-            scale_tensor = torch.tensor([W_RESIZE, H_RESIZE, W_RESIZE, H_RESIZE], device=self.device)
-            pred_bboxes_abs = pred_bboxes_norm * scale_tensor
-            gt_bboxes_abs = gt_bboxes * scale_tensor
+            # Detection
+            if isinstance(self.det_model, YOLOv5):
+                gt_bboxes_list = gt_bboxes
+                gt_bboxes = torch.stack(gt_bboxes_list, dim=1).to(self.device)
+                pred_bboxes_norm = self.det_model(images)
+                
+                # Conversion from YOLO to x1y1x2y2
+                xc, yc, w, h = gt_bboxes.T
+                gt_x1, gt_y1, gt_x2, gt_y2 = xc - w / 2, yc - h / 2, xc + w / 2, yc + h / 2
+                gt_bboxes_norm_x1y1 = torch.stack([gt_x1, gt_y1, gt_x2, gt_y2], dim=1)
+                
+                # Computing abs coordinates 640x640
+                scale_tensor = torch.tensor([YOLO_IMG_SIZE] * 4, device=self.device, dtype=torch.float32)
+                pred_bboxes_abs = pred_bboxes_norm * scale_tensor
+                gt_bboxes_abs = gt_bboxes_norm_x1y1 * scale_tensor
+                
+                # Memorize dim for rescaling
+                resize_w, resize_h = YOLO_IMG_SIZE, YOLO_IMG_SIZE
+
+            else: # Baseline
+                gt_bboxes = gt_bboxes.to(self.device)
+                pred_bboxes_norm = self.det_model(images, mode='detection')
+                
+                # Computing abs coordinates 224x224
+                scale_tensor = torch.tensor([W_RESIZE, H_RESIZE, W_RESIZE, H_RESIZE], device=self.device)
+                pred_bboxes_abs = pred_bboxes_norm * scale_tensor
+                gt_bboxes_abs = gt_bboxes * scale_tensor
+                
+                # Memorize dim for rescaling
+                resize_w, resize_h = W_RESIZE, H_RESIZE
             
             # IoU
             ious = Metrics.compute_iou(pred_bboxes_abs.cpu().numpy(), gt_bboxes_abs.cpu().numpy())
             metrics.update_detection(pred_bboxes_abs.cpu().numpy(), gt_bboxes_abs.cpu().numpy(), ious)
 
-            # recognition part (only IoU > 0.6)
+            # Recognition
             valid_mask = torch.from_numpy(ious) > 0.6
             if valid_mask.any():
-                images_to_crop = images[valid_mask]
-                bboxes_for_cropping = pred_bboxes_abs[valid_mask]
-                labels_for_recognition = plate_labels[valid_mask]
+                valid_indices = torch.where(valid_mask)[0]
+                bboxes_for_cropping_resized = pred_bboxes_abs[valid_mask]
+                
+                cropped_images_for_rec = []
+                labels_for_rec = []
 
-                cropped_images = []
-                to_pil = T.ToPILImage()
-                for img, bbox in zip(images_to_crop, bboxes_for_cropping):
-                    x1, y1, x2, y2 = map(int, bbox)
-                    top, left = max(0, y1), max(0, x1)
-                    height = max(0, y2 - y1)
-                    width = max(0, x2 - x1)
-                    if height == 0 or width == 0:
-                        continue
-                    cropped_tensor = TF.crop(img, top, left, height, width)
-                    cropped_pil = to_pil(cropped_tensor)
+                for i, bbox_resized in zip(valid_indices, bboxes_for_cropping_resized):
+                    # Original image path
+                    original_dataset_idx = batch_idx * dataloader.batch_size + i.item()
+                    if original_dataset_idx >= len(dataloader.dataset): continue
+                    img_obj = dataloader.dataset.image_objs[original_dataset_idx]
+                    original_pil_img = Image.open(img_obj.filename).convert("RGB")
+                    
+                    # Rescale bbox
+                    x1_res, y1_res, x2_res, y2_res = bbox_resized
+                    scale_x = IMG_WIDTH / resize_w
+                    scale_y = IMG_HEIGHT / resize_h
+                    x1_orig = int(x1_res * scale_x)
+                    y1_orig = int(y1_res * scale_y)
+                    x2_orig = int(x2_res * scale_x)
+                    y2_orig = int(y2_res * scale_y)
+
+                    # Cropping original img
+                    x1_orig, y1_orig = max(0, x1_orig), max(0, y1_orig)
+                    x2_orig, y2_orig = min(IMG_WIDTH, x2_orig), min(IMG_HEIGHT, y2_orig)
+                    if x1_orig >= x2_orig or y1_orig >= y2_orig: continue #check
+                    cropped_pil = original_pil_img.crop((x1_orig, y1_orig, x2_orig, y2_orig))
                     transformed_crop = self.transform_recognition(cropped_pil)
-                    cropped_images.append(transformed_crop)
+                    cropped_images_for_rec.append(transformed_crop)
+                    labels_for_rec.append(plate_labels[i])
 
-                if cropped_images:
-                    cropped_batch = torch.stack(cropped_images).to(self.device)
-                    outputs = self.rec_model(cropped_batch, mode='recognition')
-                    metrics.update_recognition(outputs, labels_for_recognition)
+                if cropped_images_for_rec:
+                    cropped_batch = torch.stack(cropped_images_for_rec).to(self.device)
+                    if isinstance(self.rec_model, PDLPR):
+                        outputs = self.rec_model(cropped_batch)
+                    else:
+                        outputs = self.rec_model(cropped_batch, mode='recognition')
+
+                    labels_tensor = torch.stack(labels_for_rec).to(cropped_batch.device)
+                    metrics.update_recognition(outputs, labels_tensor)
                 
             end_time = time.time()
             metrics.update_time(start_time, end_time)
@@ -700,7 +773,6 @@ class Evaluator:
         if is_initialized():
             barrier()
 
-        # Solo il rank 0 ritorna metriche
         if is_main_process:
             return metrics.compute()
         else:
