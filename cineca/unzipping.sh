@@ -11,7 +11,7 @@
 #SBATCH --account=try25_navigli
 
 
-cd /leonardo/home/userexternal/gdaddari/Computer-Vision/dataset
+cd $SCRATCH
 
 echo "Inizio decompressione: $(date)"
 
