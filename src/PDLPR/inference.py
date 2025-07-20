@@ -63,7 +63,7 @@ def PDLPR_inference(dataset_folder, batch_size=64):
 
 
 import os
-from tabulate import tabulate
+#from tabulate import tabulate
 
 def all_inference(base_path, batch_size=64):
     """
