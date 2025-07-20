@@ -7,3 +7,5 @@ src/PDLPR/weights/*
 .DS_Store
 cineca/logs/
 *.pt
+*.pth
+src/YOLO/runs/

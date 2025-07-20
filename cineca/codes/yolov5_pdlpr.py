@@ -1,5 +1,6 @@
 # -------- Standard Library --------- #
 import os
+import sys
 import io
 import random
 import shutil
@@ -34,6 +35,9 @@ import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 from torchvision import models, datasets
 
+# -------- Local Imports --------- #
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
+from src import YOLOv5_training, non_max_suppression, attempt_load
 
 os.environ['WANDB_MODE'] = 'disabled'
 
@@ -315,77 +319,6 @@ class FullRobustAugmentation:
         buffer.seek(0)
         return Image.open(buffer)
 
-class BaselineModel(nn.Module):
-    def __init__(self, num_classes_list, mode="detection", loading_from_path=None, resnet_weights_path="models/baseline/resnet34.pth"):
-        super().__init__()
-
-        # Detection backbone
-        if mode == "detection":
-            if resnet_weights_path:
-                resnet = models.resnet34(weights=None)     
-                state_dict = torch.load(resnet_weights_path, map_location="cpu")
-                resnet.load_state_dict(state_dict)
-            else:
-                if loading_from_path is not None:
-                    resnet = models.resnet34(weights=None)
-                else:
-                    resnet = models.resnet34(weights="DEFAULT")
-            self.backbone = nn.Sequential(*list(resnet.children())[:-2])  
-            self.pool = nn.AdaptiveAvgPool2d((1, 1))  
-            self.regressor = nn.Sequential(
-                nn.Flatten(),
-                nn.Linear(512, 256),
-                nn.ReLU(),
-                nn.Linear(256, 4),
-                nn.Sigmoid()  
-            )
-            # Recognition backbone
-        elif mode == "recognition":
-            if resnet_weights_path:
-                resnet = models.resnet34(weights=None)
-                state_dict = torch.load(resnet_weights_path, map_location="cpu")
-                resnet.load_state_dict(state_dict)
-            else:
-                resnet = models.resnet34(weights="DEFAULT")
-            self.feature_extractor = nn.Sequential(*list(resnet.children())[:-1])  
-            self.classifiers = nn.ModuleList([
-                nn.Linear(512, n_classes) for n_classes in num_classes_list
-            ])
-        else:
-            raise ValueError("mode not supported. Use either detection or recognition.")
-        
-        if loading_from_path is not None:
-            state_dict = torch.load(loading_from_path, map_location="cpu")
-            # Fix DataParallel
-            new_state_dict = OrderedDict()
-            for k, v in state_dict.items():
-                new_key = k.replace("module.", "") if k.startswith("module.") else k
-                new_state_dict[new_key] = v
-            self.load_state_dict(new_state_dict)
-
-    def forward_detection(self, x):
-        x = self.backbone(x)
-        x = self.pool(x)
-        x = self.regressor(x)
-        return x
-
-    def forward_recognition(self, x):
-        x = self.feature_extractor(x)
-        x = x.view(x.size(0), -1)
-        outputs = [clf(x) for clf in self.classifiers]
-        return outputs
-
-    def forward(self, x, mode=None):
-        """
-        mode: 'detection' or 'recognition'
-        """
-        if mode == 'detection':
-            return self.forward_detection(x)
-        elif mode == 'recognition':
-            return self.forward_recognition(x)
-        else:
-            raise ValueError("mode not supported. Use either detection or recognition.")
-
 class Metrics:
     def __init__(self, task):
         self.task = task
@@ -424,12 +357,20 @@ class Metrics:
         self.correct_detections_iou7 += (np.array(ious) > 0.7).sum()      
 
     def update_recognition(self, outputs, targets):
-        if outputs is None or len(outputs) == 0:
+        # Checking if null, both for baseline and PDLPR.
+        if (isinstance(outputs, torch.Tensor) and outputs.numel() == 0) or \
+           (isinstance(outputs, list) and not outputs):
             self.total_samples += targets.shape[0]
             return
 
-        # predictions: [B] -> torch.stack -> [B, T]
-        pred_labels = torch.stack([logits.argmax(dim=1) for logits in outputs], dim=1)
+        if isinstance(outputs, list):
+            # predictions: [B] -> torch.stack -> [B, T]
+            pred_labels = torch.stack([logits.argmax(dim=1) for logits in outputs], dim=1)
+        elif isinstance(outputs, torch.Tensor) and outputs.ndim == 3:
+            pred_labels = torch.argmax(outputs, dim=2)
+        else:
+            raise TypeError(f"Unsupported 'outputs' format (Metrics.update_recognition): {type(outputs)}")
+        
         targets_valid = targets.to(pred_labels.device)
         num_valid_predictions = pred_labels.size(0)
         assert num_valid_predictions == targets_valid.size(0) #Check
@@ -588,7 +529,21 @@ class Trainer:
         return self.model
 
     def _train_yolov5(self, epochs=25, batch_size=50, optimizer="Adam", lr0=1e-3, lrf=1e-5, cos_lr=True, project="runs/train", name="lp_detection", cache="ram"):
-        pass
+        YOLOv5_training(
+            weights=self.model_path,
+            data=DATASET_PATH_YOLO,
+            epochs=epochs,
+            batch_size=batch_size,
+            imgsz=640,
+            optimizer=optimizer,
+            lr0=lr0,
+            lrf=lrf,
+            cos_lr=cos_lr,
+            project=project,
+            name=name,
+            cache=cache
+        )
+        return self.model
 
     def _train_pdlpr(self, dataloader, epochs):
         self.model.train()
@@ -658,7 +613,10 @@ class Evaluator:
             gt_bboxes = gt_bboxes.to(self.device)
             
             # detection part
-            pred_bboxes_norm = self.det_model(images, mode='detection')
+            if isinstance(self.det_model, YOLOv5):
+                pred_bboxes_norm = self.det_model(images)
+            else:
+                pred_bboxes_norm = self.det_model(images, mode='detection')
             #Normalizing
             scale_tensor = torch.tensor([W_RESIZE, H_RESIZE, W_RESIZE, H_RESIZE], device=self.device)
             pred_bboxes_abs = pred_bboxes_norm * scale_tensor
@@ -676,8 +634,9 @@ class Evaluator:
                 labels_for_recognition = plate_labels[valid_mask]
 
                 cropped_images = []
+                cropped_labels = []
                 to_pil = T.ToPILImage()
-                for img, bbox in zip(images_to_crop, bboxes_for_cropping):
+                for img, bbox, label in zip(images_to_crop, bboxes_for_cropping, labels_for_recognition):
                     x1, y1, x2, y2 = map(int, bbox)
                     top, left = max(0, y1), max(0, x1)
                     height = max(0, y2 - y1)
@@ -688,10 +647,16 @@ class Evaluator:
                     cropped_pil = to_pil(cropped_tensor)
                     transformed_crop = self.transform_recognition(cropped_pil)
                     cropped_images.append(transformed_crop)
+                    cropped_labels.append(label)
 
                 if cropped_images:
                     cropped_batch = torch.stack(cropped_images).to(self.device)
-                    outputs = self.rec_model(cropped_batch, mode='recognition')
+                    if isinstance(self.rec_model, PDLPR):
+                        outputs = self.rec_model(cropped_batch)
+                    else:
+                        outputs = self.rec_model(cropped_batch, mode='recognition')
+
+                    labels_for_recognition = torch.stack(cropped_labels).to(cropped_batch.device)
                     metrics.update_recognition(outputs, labels_for_recognition)
                 
             end_time = time.time()
@@ -705,6 +670,298 @@ class Evaluator:
             return metrics.compute()
         else:
             return None
+
+# MODELS #
+def collate_fn(batch):
+    images, texts = zip(*batch)
+    images = torch.stack(images)
+    token_seqs = [torch.tensor(tokenizer.encode(t)[:seq_len] + [0]*(seq_len-len(t))) for t in texts]
+    targets = torch.stack(token_seqs)  # [B, seq_len]
+    if (targets >= num_classes).any() or (targets < 0).any():
+        print("[ERROR] Out of range, Excerpt:")
+        for t in texts:
+            print("Label:", t, "Encoded:", tokenizer.encode(t))
+        print("Target tensor:", targets)
+        print("num_classes:", num_classes)
+        raise ValueError("Out of range For CrossEntropyLoss!")
+    return images, targets
+
+class SimplePlateTokenizer:
+    def __init__(self, charset):
+        self.char2idx = {c: i + 1 for i, c in enumerate(charset)}  # 0 = PAD
+        self.char2idx['<PAD>'] = 0
+        self.idx2char = {i: c for c, i in self.char2idx.items()}
+    def encode(self, text):
+        for c in text:
+            if c not in self.char2idx:
+                print(f"[Tokenizer Warning] Carattere '{c}' non nel charset! Verrà codificato come PAD (0)")
+        return [self.char2idx.get(c, 0) for c in text]
+    def decode(self, indices):
+        return ''.join([self.idx2char.get(i, '') for i in indices if i != 0])
+    def vocab_size(self):
+        return len(self.char2idx)
+
+tokenizer = SimplePlateTokenizer(charset)
+num_classes = tokenizer.vocab_size()
+seq_len = 8  # maximum car plate length
+
+# --- IGFE ---
+class FocusStructure(nn.Module):
+    def __init__(self):
+        super().__init__()
+    def forward(self, x):
+        return torch.cat([
+            x[..., ::2, ::2],
+            x[..., 1::2, ::2],
+            x[..., ::2, 1::2],
+            x[..., 1::2, 1::2]
+        ], dim=1)
+
+class CNNBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+        super().__init__()
+        self.leaky_relu = nn.LeakyReLU(0.2, inplace=False)
+        self.bn = nn.BatchNorm2d(in_channels)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+    def forward(self, x):
+        x = self.leaky_relu(x)
+        x = self.bn(x)
+        x = self.conv(x)
+        return x
+
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.cnn_block1 = CNNBlock(in_channels, out_channels)
+        self.cnn_block2 = CNNBlock(out_channels, out_channels)
+        self.identity = nn.Identity() if in_channels == out_channels else nn.Conv2d(in_channels, out_channels, 1)
+    def forward(self, x):
+        identity = self.identity(x)
+        out = self.cnn_block1(x)
+        out = self.cnn_block2(out)
+        return out + identity
+
+class ConvDownSampling(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=2):
+        super().__init__()
+        self.leaky_relu = nn.LeakyReLU(0.2, inplace=False)
+        self.bn = nn.BatchNorm2d(in_channels)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
+    def forward(self, x):
+        x = self.leaky_relu(x)
+        x = self.bn(x)
+        x = self.conv(x)
+        return x
+
+class IGFE(nn.Module):
+    def __init__(self, in_channels, base_channels):
+        super().__init__()
+        self.focus = FocusStructure()
+        self.layer1 = ResBlock(4 * in_channels, base_channels)
+        self.layer2 = ResBlock(base_channels, base_channels)
+        self.down1 = ConvDownSampling(base_channels, base_channels, stride=2)
+        self.layer3 = ResBlock(base_channels, base_channels)
+        self.layer4 = ResBlock(base_channels, base_channels)
+        self.down2 = ConvDownSampling(base_channels, base_channels, stride=2)
+    def forward(self, x):
+        x = self.focus(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.down1(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.down2(x)
+        return x
+    
+# --- Encoder ---
+class PositionalEncoding2D(nn.Module):
+    def __init__(self, d_model, height, width):
+        super().__init__()
+        if d_model % 4 != 0:
+            raise ValueError("d_model must be divisible by 4 for 2D positional encoding")
+        pe = torch.zeros(d_model, height, width)
+        y_pos = torch.arange(0, height).unsqueeze(1).repeat(1, width)
+        x_pos = torch.arange(0, width).unsqueeze(0).repeat(height, 1)
+        div_term = torch.exp(torch.arange(0, d_model // 2, 2) * -(torch.log(torch.tensor(10000.0)) / (d_model // 2)))
+        pe[0::4, :, :] = torch.sin(y_pos.unsqueeze(0) * div_term.unsqueeze(1).unsqueeze(2))
+        pe[1::4, :, :] = torch.cos(y_pos.unsqueeze(0) * div_term.unsqueeze(1).unsqueeze(2))
+        pe[2::4, :, :] = torch.sin(x_pos.unsqueeze(0) * div_term.unsqueeze(1).unsqueeze(2))
+        pe[3::4, :, :] = torch.cos(x_pos.unsqueeze(0) * div_term.unsqueeze(1).unsqueeze(2))
+        self.register_buffer('pe', pe.unsqueeze(0))
+    def forward(self, x):
+        return x + self.pe[:, :x.size(1), :x.size(2), :x.size(3)]
+
+class EncoderModule(nn.Module):
+    def __init__(self, d_model=512, nhead=8, height=16, width=16):
+        super().__init__()
+        self.pos_enc = PositionalEncoding2D(d_model, height, width)
+        self.cnn_block1 = CNNBlock(d_model, d_model, kernel_size=1, stride=1, padding=0)
+        self.mha = nn.MultiheadAttention(embed_dim=d_model, num_heads=nhead)
+        self.cnn_block2 = CNNBlock(d_model, d_model, kernel_size=1, stride=1, padding=0)
+        self.add_norm = nn.LayerNorm(d_model)
+    def forward(self, x):
+        residual = x.clone()
+        x = self.pos_enc(x)
+        x = self.cnn_block1(x)
+        B, C, H, W = x.shape
+        x_ = x.permute(2, 3, 0, 1).reshape(H*W, B, C)
+        attn_out, _ = self.mha(x_, x_, x_)
+        x = attn_out.reshape(H, W, B, C).permute(2, 3, 0, 1)
+        x = self.cnn_block2(x)
+        out = residual + x
+        out = out.permute(0, 2, 3, 1)
+        out = self.add_norm(out)
+        out = out.permute(0, 3, 1, 2)
+        return out
+
+class Encoder(nn.Module):
+    def __init__(self, d_model=512, nhead=8, height=16, width=16, num_layers=3):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            EncoderModule(d_model, nhead, height, width) for _ in range(num_layers)
+        ])
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+# --- Decoder ---
+class AddNorm(nn.Module):
+    def __init__(self, d_model, eps=1e-6):
+        super().__init__()
+        self.norm = nn.LayerNorm(d_model, eps=eps)
+    def forward(self, x, sublayer_out):
+        return self.norm(x + sublayer_out)
+
+class DecodingModule(nn.Module):
+    def __init__(self, d_model=512, nhead=8, height=16, width=16):
+        super().__init__()
+        self.pos_enc = PositionalEncoding2D(d_model, height, width)
+        self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=nhead)
+        self.cross_cnn1 = CNNBlock(d_model, d_model, kernel_size=1, stride=1, padding=0)
+        self.cross_cnn2 = CNNBlock(d_model, d_model, kernel_size=1, stride=1, padding=0)
+        self.cross_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=nhead)
+        self.feed_forward = nn.Sequential(
+            nn.Conv2d(d_model, d_model * 4, kernel_size=1),
+            nn.ReLU(inplace=False),
+            nn.Conv2d(d_model * 4, d_model, kernel_size=1),
+        )
+        self.addnorm1 = AddNorm(d_model)
+        self.addnorm2 = AddNorm(d_model)
+        self.addnorm3 = AddNorm(d_model)
+    def forward(self, x, encoder_out):
+        x = self.pos_enc(x)
+        B, C, H, W = x.shape
+        x_ = x.permute(2, 3, 0, 1).reshape(H*W, B, C)
+        self_attn_out, _ = self.self_attn(x_, x_, x_)
+        self_attn_out = self.addnorm1(x_.permute(1, 0, 2), self_attn_out.permute(1, 0, 2))
+        self_attn_out = self_attn_out.permute(1, 0, 2)
+        x = self_attn_out.reshape(H, W, B, C).permute(2, 3, 0, 1)
+        enc = self.cross_cnn1(encoder_out)
+        enc = self.cross_cnn2(enc)
+        B_enc, C_enc, H_enc, W_enc = enc.shape
+        enc_ = enc.permute(2, 3, 0, 1).reshape(H_enc*W_enc, B_enc, C_enc)
+        x_ = x.permute(2, 3, 0, 1).reshape(H*W, B, C)
+        cross_attn_out, _ = self.cross_attn(x_, enc_, enc_)
+        cross_attn_out = self.addnorm2(x_.permute(1, 0, 2), cross_attn_out.permute(1, 0, 2))
+        cross_attn_out = cross_attn_out.permute(1, 0, 2)
+        x = cross_attn_out.reshape(H, W, B, C).permute(2, 3, 0, 1)
+        ff_out = self.feed_forward(x)
+        out = self.addnorm3(x.permute(0, 2, 3, 1).reshape(B, -1, C), ff_out.permute(0, 2, 3, 1).reshape(B, -1, C))
+        out = out.reshape(B, H, W, C).permute(0, 3, 1, 2)
+        return out
+
+class Decoder(nn.Module):
+    def __init__(self, d_model=512, nhead=8, height=16, width=16, num_layers=3, num_classes=68, seq_len=8):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            DecodingModule(d_model=d_model, nhead=nhead, height=height, width=width)
+            for _ in range(num_layers)
+        ])
+        self.seq_len = seq_len
+        self.classifier = nn.Linear(d_model, num_classes)
+        self.pool = nn.AdaptiveAvgPool2d((1, seq_len))  # (B, C, 1, seq_len)
+    def forward(self, x, encoder_out):
+        for layer in self.layers:
+            x = layer(x, encoder_out)
+        x = self.pool(x)  # (B, C, 1, seq_len)
+        x = x.squeeze(2)  # (B, C, seq_len)
+        x = x.permute(0, 2, 1)  # (B, seq_len, C)
+        logits = self.classifier(x)  # (B, seq_len, num_classes)
+        return logits
+
+## ----- PDLPR MODEL ----- ##
+class PDLPR(nn.Module):
+    def __init__(self,
+                 in_channels=3,
+                 base_channels=512,
+                 encoder_d_model=512,
+                 encoder_nhead=8,
+                 encoder_height=16,
+                 encoder_width=16,
+                 decoder_num_layers=3,
+                 num_classes=68,
+                 seq_len=8):
+        super().__init__()
+        
+        self.model_type = "pdlpr"
+        
+        self.igfe = IGFE(in_channels, base_channels)
+        
+        self.pool = nn.AdaptiveAvgPool2d((encoder_height, encoder_width))
+        
+        self.encoder = Encoder(
+            d_model=encoder_d_model, 
+            nhead=encoder_nhead, 
+            height=encoder_height, 
+            width=encoder_width
+        )
+        
+        self.decoder = Decoder(
+            d_model=encoder_d_model,
+            nhead=encoder_nhead,
+            height=encoder_height,
+            width=encoder_width,
+            num_layers=decoder_num_layers,
+            num_classes=num_classes,
+            seq_len=seq_len
+        )
+        
+    def forward(self, x):
+        x = self.igfe(x)
+        x = self.pool(x)
+        x = self.encoder(x)
+        decoder_input = torch.zeros_like(x)
+        x = self.decoder(decoder_input, x)
+        return x
+    
+class YOLOv5(nn.Module):
+    def __init__(self, model_path, device):
+        super().__init__()
+        self.device = device
+        self.model = attempt_load(model_path, device=device) 
+
+    def forward(self, img):
+        with torch.no_grad():
+            preds = self.model(img)[0]
+            preds = non_max_suppression(prediction=preds)
+
+            bboxes = []
+            for pred in preds:
+                if pred is not None and len(pred) > 0:
+                    # BBox with highest confidence
+                    best = pred[torch.argmax(pred[:, 4])]
+                    bbox = best[:4]  # [x1, y1, x2, y2]
+                else:
+                    bbox = torch.tensor([0, 0, 0, 0], dtype=torch.float32, device=img.device)
+
+                # Normalizing in 0,1
+                h, w = img.shape[2:] #640x640
+                norm_bbox = bbox / torch.tensor([w, h, w, h], device=img.device)
+                bboxes.append(norm_bbox)
+
+            return torch.stack(bboxes)
+        return preds
 
 
 
@@ -726,33 +983,30 @@ def main():
     disp(f"Test dataset (end-to-end): {len(test_dataset)} images")
 
 
-    # Cnst
-    num_classes_list = [len(PROVINCES), len(ALPHABETS)] + [len(ADS)] * 5 
 
     # -------------------------
-    # Training detection model
+    # Loading models
     # -------------------------
-    det_model = BaselineModel(num_classes_list=num_classes_list, mode="detection", loading_from_path="models/baseline/best_detection_model.pth")
-    #det_model = BaselineModel(num_classes_list=num_classes_list, resnet_weights_path="models/baseline/resnet34.pth", mode="detection")
-    #det_trainer = Trainer(det_model, task="detection", device=DEVICE)
-    #det_model = det_trainer.train(train_loader_det, epochs=17)
-
-
-    # -------------------------
-    # Training recognition model
-    # -------------------------
-    rec_model = BaselineModel(num_classes_list=num_classes_list, loading_from_path="models/baseline/best_recognition_model.pth", mode="recognition")
-    #rec_model = BaselineModel(num_classes_list=num_classes_list, resnet_weights_path="models/baseline/resnet34.pth", mode="recognition")
-    #rec_trainer = Trainer(rec_model, num_classes_list=num_classes_list, task="recognition", device=DEVICE)
-    #rec_model = rec_trainer.train(train_loader_rec, epochs=17)
+    yolov5_model = YOLOv5(model_path="src/YOLO/runs/train/weights/best.pt", device=DEVICE)
+    pdlpr_model = PDLPR(
+        in_channels=3,
+        base_channels=256,
+        encoder_d_model=256,
+        encoder_nhead=4,
+        encoder_height=16,
+        encoder_width=16,
+        decoder_num_layers=2,
+        num_classes=num_classes,
+        seq_len=seq_len
+    )
 
 
     # -------------------------
     # Evaluation detection and recognition (end-to-end)
     # -------------------------
-    evaluator = Evaluator(det_model=det_model, rec_model=rec_model, device=DEVICE)
-    metrics_rec = evaluator.evaluate(test_loader, task="end_to_end")
-    disp(f"End-to-End Results:{metrics_rec}")
+    evaluator = Evaluator(det_model=yolov5_model, rec_model=pdlpr_model, device=DEVICE)
+    metrics_yolov5_pdlpr = evaluator.evaluate(test_loader, task="end_to_end")
+    disp(f"End-to-End Results (YOLOv5-PDLPR):{metrics_yolov5_pdlpr}")
 
     cleanup_ddp()
 if __name__ == "__main__":

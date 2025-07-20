@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=baseline
+#SBATCH --job-name=Y-PDLPR
 #SBATCH --time=24:00:00                       
 #SBATCH --nodes=1                             
 #SBATCH --ntasks-per-node=1                   
@@ -7,8 +7,8 @@
 #SBATCH --gres=gpu:4                          
 #SBATCH --partition=boost_usr_prod           
 #SBATCH --qos=normal                        
-#SBATCH --output=cineca/logs/baseline.out
-#SBATCH --error=cineca/logs/baseline.err
+#SBATCH --output=cineca/logs/Y-PDLPR.out
+#SBATCH --error=cineca/logs/Y-PDLPR.err
 #SBATCH --account=try25_navigli          
 
 
@@ -19,4 +19,4 @@ source $SCRATCH/ComputerVision/bin/activate
 
 cd $SLURM_SUBMIT_DIR 
 
-srun python -m torch.distributed.launch --nproc_per_node=4 cineca/codes/baseline.py
+srun python -m torch.distributed.launch --nproc_per_node=4 cineca/codes/yolov5_pdlpr.py

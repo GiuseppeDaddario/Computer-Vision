@@ -1,7 +1,3 @@
-#from .PDLPR import PDLPR_training, PDLPR_inference
-#from .YOLO import YOLOv5_training, YOLOv5_inference
+from .YOLO import YOLOv5_training, attempt_load, non_max_suppression
 
-__all__ = ['PDLPR_training',
-           'PDLPR_inference',
-           'YOLOv5_training',
-           'YOLOv5_inference']
+__all__ = ['YOLOv5_training', 'attempt_load', 'non_max_suppression']

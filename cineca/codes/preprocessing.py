@@ -9,8 +9,8 @@ from tqdm import tqdm
 import shutil
 import random
 
-IMG_WIDTH = 1160
-IMG_HEIGHT = 720
+IMG_WIDTH = 720
+IMG_HEIGHT = 1160
 CLASS_ID = 0 
 
 ######################## UTILS FOR YOLOV5 ########################
