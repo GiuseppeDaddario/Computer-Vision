@@ -15,7 +15,9 @@ from src.PDLPR.PDLPR import PDLPR
 import matplotlib.pyplot as plt
 from src.PDLPR.augmentation import FullRobustAugmentation
 
-
+from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 # --- Costanti CCPD ---
 
@@ -114,11 +116,15 @@ def collate_fn(batch):
 
 from torch.utils.data import random_split
 
-def PDLPR_training(image_folder,num_epochs, batch_size=32):
+def PDLPR_training(image_folder, num_epochs, batch_size=32, rank=0, world_size=1, device=torch.device('cpu')):
 
+
+    if rank == 0:
+        os.makedirs("src/PDLPR/weights/newtrain", exist_ok=True)
+        os.makedirs("src/PDLPR/logs/newtrain", exist_ok=True)
     # --- Training setup ---
     #image_folder = r"C:\Users\Lorenzo\Desktop\Computer_Vision_\dataset\CCPD2019\ccpd_base" 
-    batch_size = 32
+    batch_size = batch_size
     dataset = CCPDPlateDataset(image_folder)
 
     # Suddividi il dataset in 80% train e 20% val
@@ -126,8 +132,15 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn, num_workers=4)
+    # Distributed Sampler
+    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
+    val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False)
+    train_loader = DataLoader(
+        train_dataset, batch_size=batch_size, sampler=train_sampler, collate_fn=collate_fn, num_workers=8, pin_memory=True
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, sampler=val_sampler, collate_fn=collate_fn, num_workers=8, pin_memory=True
+    )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = PDLPR(
@@ -142,7 +155,9 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
         seq_len=seq_len
     ).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    model = DDP(model, device_ids=[device.index], output_device=device.index)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
     loss_fn = nn.CrossEntropyLoss(ignore_index=0)
     scaler = GradScaler(device = "cuda")
 
@@ -160,6 +175,7 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
 
 
     for epoch in range(num_epochs):
+        train_sampler.set_epoch(epoch)
         model.train()
         running_loss = 0.0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs} [Train]", unit="batch")
@@ -175,14 +191,13 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
             scaler.step(optimizer)
             scaler.update()
             running_loss += loss.item()
-            pbar.set_postfix({"batch_loss": loss.item()})
+            if rank == 0:
+                pbar.set_postfix({"batch_loss": loss.item()})
         avg_loss = running_loss / len(train_loader)
         train_losses.append(avg_loss)
-        
-        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {avg_loss:.4f}")
 
-
-
+        if rank == 0:
+            print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {avg_loss:.4f}")
         
         # VALIDATION
         model.eval()
@@ -199,28 +214,31 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
         avg_val_loss = val_loss / len(val_loader)
         val_losses.append(avg_val_loss)
         print(f"Epoch [{epoch+1}/{num_epochs}] - Val Loss: {avg_val_loss:.4f}")
+
+        if rank == 0:
+            print(f"Epoch [{epoch+1}/{num_epochs}] - Val Loss: {avg_val_loss:.4f}")
+            torch.save(model.module.state_dict(), f"src/PDLPR/weights/newtrain/pdlpr_epoch{epoch+1}.pth")
+
+    if rank == 0:
+        torch.save(model.module.state_dict(), "src/PDLPR/weights/newtrain/pdlpr_final.pth")
+
+        # Plot loss solo rank 0
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(10, 5))
+        plt.plot(range(1, num_epochs+1), train_losses, label='Training Loss', marker='o')
+        plt.plot(range(1, num_epochs+1), val_losses, label='Validation Loss', marker='x')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Training and Validation Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig("src/PDLPR/logs/newtrain/loss_plot.png")
+        plt.close()
+        print("Salvato grafico delle loss in 'src/PDLPR/logs/newtrain/loss_plot.png'")
+
+    
         
 
-        torch.save(model.state_dict(), f"src/PDLPR/weights/newtrain/pdlpr_epoch{epoch+1}.pth")
-    
-
-
-
-    torch.save(model.state_dict(), "src/PDLPR/weights/newtrain/pdlpr_final.pth")
-
-
-    # --- Plot delle loss ---
-    plt.figure(figsize=(10, 5))
-    plt.plot(range(1, num_epochs+1), train_losses, label='Training Loss', marker='o')
-    plt.plot(range(1, num_epochs+1), val_losses, label='Validation Loss', marker='x')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.title('Training and Validation Loss')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig("src/PDLPR/logs/newtrain/loss_plot.png")
-    plt.close()
-    print("Salvato grafico delle loss in 'src/PDLPR/newtrain/loss_plot.png'")
-
+  
 
