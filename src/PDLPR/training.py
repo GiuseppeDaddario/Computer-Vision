@@ -132,11 +132,11 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = PDLPR(
         in_channels=3,
-        base_channels=256,
-        encoder_d_model=256,
+        base_channels=512, #dim igfe
+        encoder_d_model=512, # dim encoder-decoder
         encoder_nhead=4,
-        encoder_height=16,
-        encoder_width=16,
+        encoder_height=18,
+        encoder_width=6,
         decoder_num_layers=2,
         num_classes=num_classes,
         seq_len=seq_len
@@ -201,12 +201,12 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
         print(f"Epoch [{epoch+1}/{num_epochs}] - Val Loss: {avg_val_loss:.4f}")
         
 
-        torch.save(model.state_dict(), f"src/PDLPR/weights/pdlpr_epoch{epoch+1}.pth")
+        torch.save(model.state_dict(), f"src/PDLPR/weights/newtrain/pdlpr_epoch{epoch+1}.pth")
     
 
 
 
-    torch.save(model.state_dict(), "src/PDLPR/weights/pdlpr_final.pth")
+    torch.save(model.state_dict(), "src/PDLPR/weights/newtrain/pdlpr_final.pth")
 
 
     # --- Plot delle loss ---
@@ -219,8 +219,8 @@ def PDLPR_training(image_folder,num_epochs, batch_size=32):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig("src/PDLPR/logs/loss_plot.png")
+    plt.savefig("src/PDLPR/logs/newtrain/loss_plot.png")
     plt.close()
-    print("Salvato grafico delle loss in 'src/PDLPR/loss_plot.png'")
+    print("Salvato grafico delle loss in 'src/PDLPR/newtrain/loss_plot.png'")
 
 
