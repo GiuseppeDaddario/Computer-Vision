@@ -1,10 +1,4 @@
-
-## Useful Links
-
-- [Dataset](https://drive.google.com/drive/folders/1r7S8z7yIUUpCLBC6y0bq9sBneIMsUxVZ?usp=sharing) - CCPD2019
-
-
-## Project of Computer Vision: Car Plate recognition and reconstruction with Deep Learning
+# Project of Computer Vision: Car Plate recognition and reconstruction with Deep Learning
 #### Sapienza University of Rome, Artificial Intelligence and Robotics Master Degree 
 #### D'Addario Giuseppe MAT:2177530, Benucci Lorenzo MAT:2219690, Tomassacci Samuele MAT:
 ***
@@ -48,3 +42,8 @@ The repository is organized into the following main components:
 - **`Network/`**: Defines the models used, in particular way both the baseline and the YOLOv5-PDLPR model.
 - **`Train/`**: Contains the training loop logic, including forward pass, loss computation, backpropagation, and model optimization.
 - **`Evaluation/`**: Performs evaluation on the test sets, including metric computation like accuracy or FPS
+
+***
+## Useful Links
+
+- [Unzipped Dataset](https://drive.google.com/drive/folders/1r7S8z7yIUUpCLBC6y0bq9sBneIMsUxVZ?usp=sharing) - CCPD2019
