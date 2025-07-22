@@ -1,0 +1,29 @@
+Combining datasets...
+Total images in combined dataset: 239996
+Combining datasets...
+Total images in combined dataset: 239996
+Combining datasets...
+Total images in combined dataset: 239996
+Combining datasets...
+Total images in combined dataset: 239996
+Epoch [1/5] - Train Loss: 0.0022
+Epoch [1/5] - Val Loss: 0.0006
+Epoch [2/5] - Train Loss: 0.0005
+Epoch [2/5] - Val Loss: 0.0006
+Epoch [3/5] - Train Loss: 0.0002
+Epoch [3/5] - Val Loss: 0.0006
+Epoch [4/5] - Train Loss: 0.0001
+Epoch [4/5] - Val Loss: 0.0005
+Epoch [5/5] - Train Loss: 0.0000
+Epoch [5/5] - Val Loss: 0.0006
+Loss graph saved in: 'src/PDLPR/logs/newtrain/pdlpr_loss.png'
+
+--- Valutazione ---
+
+Modello Originale (Clean): {'FPS_Detection': 145.4, 'FPS_Full': 71.41, 'Mean_IoU': 0.7518, 'Detection_Accuracy_IoU_0.7': 84.45, 'Plate_Accuracy_Full': 74.2, 'Plate_Accuracy(-Fisrt_Char)': 76.2, 'Plate_Accuracy_Full_on_Processed': 83.89, 'Plate_Accuracy(-First)_on_Processed': 86.15}
+Modello Trained (Clean):   {'FPS_Detection': 565.88, 'FPS_Full': 101.96, 'Mean_IoU': 0.7518, 'Detection_Accuracy_IoU_0.7': 84.45, 'Plate_Accuracy_Full': 79.55, 'Plate_Accuracy(-Fisrt_Char)': 81.1, 'Plate_Accuracy_Full_on_Processed': 89.94, 'Plate_Accuracy(-First)_on_Processed': 91.69}
+
+--- Valutazione su DATI ATTACCATI ---
+
+Modello Originale (Attacked): {'FPS_Detection': 585.5, 'FPS_Full': 101.54, 'Mean_IoU': 0.7803, 'Detection_Accuracy_IoU_0.7': 87.25, 'Plate_Accuracy_Full': 40.15, 'Plate_Accuracy(-Fisrt_Char)': 46.85, 'Plate_Accuracy_Full_on_Processed': 43.95, 'Plate_Accuracy(-First)_on_Processed': 51.29}
+Modello Trained (Attacked):   {'FPS_Detection': 603.34, 'FPS_Full': 103.6, 'Mean_IoU': 0.7803, 'Detection_Accuracy_IoU_0.7': 87.25, 'Plate_Accuracy_Full': 69.15, 'Plate_Accuracy(-Fisrt_Char)': 71.75, 'Plate_Accuracy_Full_on_Processed': 75.7, 'Plate_Accuracy(-First)_on_Processed': 78.54}
