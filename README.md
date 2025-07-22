@@ -49,6 +49,7 @@ The repository is organized into the following main components:
 ## Useful Links
 
 - [Unzipped Dataset](https://drive.google.com/drive/folders/1r7S8z7yIUUpCLBC6y0bq9sBneIMsUxVZ?usp=sharing) - CCPD2019
+- [Presentation](https://docs.google.com/presentation/d/1mq8-Ve5r8-5uxog4n3JruP7VIOrj3UbAnKX4ZwGQN2w/edit?usp=sharing) - Google Slides
 
 ***
 ## References
