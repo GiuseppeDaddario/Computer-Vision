@@ -1,14 +1,3 @@
-# Computer Vision
-Repository for the Computer Vision project
-
-
-
-## PDLPR [RECOGNITION] pipeline
-- preprocessing
-- igfe
-- encoder
-- decoder
-
 
 ## Useful Links
 
