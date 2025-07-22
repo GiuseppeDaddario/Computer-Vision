@@ -3,7 +3,7 @@
 #### D'Addario Giuseppe MAT:2177530, Benucci Lorenzo MAT:2219690, Tomassacci Samuele MAT:
 ***
 ### Overview
-The goal of this project was to develop a solid pipeline for the detection and recognition of carplates in the images coming from the CCPD2019 (Chinese Carplate Parking Dataset)[1]. Two pairs of models were developed and compared, a simple baseline and the approach of YOLOv5-PDLPR presented in [2]. The evaluation metrics that were used are the accuracy on the detection, the accuracy on the full pipeline, the time of inferece (FPS) and other metrics linked to the imbalance of the dataset, namely, the accuracy computed only on the detected samples and the accuracy computed only on the numeric part of the carplate, ignoring the chinese province.
+The goal of this project was to develop a solid pipeline for the detection and recognition of carplates in the images coming from the CCPD2019 (Chinese Carplate Parking Dataset)[2]. Two pairs of models were developed and compared, a simple baseline and the approach of YOLOv5-PDLPR presented in [1]. The evaluation metrics that were used are the accuracy on the detection, the accuracy on the full pipeline, the time of inferece (FPS) and other metrics linked to the imbalance of the dataset, namely, the accuracy computed only on the detected samples and the accuracy computed only on the numeric part of the carplate, ignoring the chinese province.
 ***
 ### How to run the code
 To reproduce the results or run the project locally, simply execute the Jupyter notebook main.ipynb.
