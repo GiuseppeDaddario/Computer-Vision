@@ -21,6 +21,8 @@ The repository is organized into the following main components:
 - **`datasets/`**: Contains a toy dataset created with 5 samples per subset, for demonstration purposes.
   - `ccpd_base/`: The training subset
   - `ccpd_*`: Testing subsets with different types of images.
+ 
+- **`images/`**: Contains a pair of clean-corrupted image
 
 - **`src/`**: Source code of the project used in phase of developing. Is not needed to run the notebook.
     - `YOLO/`: training and results of the YOLOv5 model.
