@@ -23,7 +23,8 @@ Repository for the Computer Vision project
 The goal of this project was to develop a solid pipeline for the detection and recognition of carplates in the images coming from the CCPD2019 (Chinese Carplate Parking Dataset)[1]. Two pairs of models were developed and compared, a simple baseline and the approach of YOLOv5-PDLPR presented in [2]. The evaluation metrics that were used are the accuracy on the detection, the accuracy on the full pipeline, the time of inferece (FPS) and other metrics linked to the imbalance of the dataset, namely, the accuracy computed only on the detected samples and the accuracy computed only on the numeric part of the carplate, ignoring the chinese province.
 ***
 ### How to run the code
-The notebook containing everything needed for the replication of the work is "main.ipynb".
+To reproduce the results or run the project locally, simply execute the Jupyter notebook main.ipynb.
+It contains all the necessary steps, including data loading, model definition, training, and evaluation.
 
 ***
 ### Structure of the Repository
@@ -50,11 +51,11 @@ The repository is organized into the following main components:
 
 ***
 ### Structure of the Notebook
-- **`Requirements/`**:
-- **`Imports/`**:
-- **`Globals/`**:
-- **`Utils/`**:
-- **`Data/`**:
-- **`Network/`**:
-- **`Train/`**:
-- **`Evaluation/`**:
+- **`Requirements/`**: This section installs the necessary dependencies and clones the project repository
+- **`Imports/`**: All external libraries and custom modules used throughout the notebook are imported here, including PyTorch, torchvision, and utility functions.
+- **`Globals/`**: Defines global parameters and configuration constants such as seed value, device selection (CPU/GPU), learning rate, and number of epochs.
+- **`Utils/`**: Includes utility functions that support data processing, visualization, or any general-purpose functionality required during training and evaluation.
+- **`Data/`**: Handles dataset loading and preprocessing steps, including normalization and data augmentation.
+- **`Network/`**: Defines the models used, in particular way both the baseline and the YOLOv5-PDLPR model.
+- **`Train/`**: Contains the training loop logic, including forward pass, loss computation, backpropagation, and model optimization.
+- **`Evaluation/`**: Performs evaluation on the test sets, including metric computation like accuracy or FPS
