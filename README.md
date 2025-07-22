@@ -51,9 +51,9 @@ The repository is organized into the following main components:
 ***
 ## References
 
-- [1] (https://www.researchgate.net/publication/380201742_A_Real-Time_License_Plate_Detection_and_Recognition_Model_in_Unconstrained_Scenarios#fullTextFileContent) - Tao, L., Hong, S., Lin, Y., Chen, Y., He, P. and Tie, Z. (2024). A Real-Time License Plate Detection and
+- [1](https://www.researchgate.net/publication/380201742_A_Real-Time_License_Plate_Detection_and_Recognition_Model_in_Unconstrained_Scenarios#fullTextFileContent) - Tao, L., Hong, S., Lin, Y., Chen, Y., He, P. and Tie, Z. (2024). A Real-Time License Plate Detection and
 Recognition Model in Unconstrained Scenarios. Sensors, 24(9), 2791
 
-- [2] (https://openaccess.thecvf.com/content_ECCV_2018/papers/Zhenbo_Xu_Towards_End-to-End_License_ECCV_2018_paper.pdf) - Xu, Z.; Yang, W.; Meng, A.; Lu, N.; Huang, H.; Ying, C.; Huang, L. Towards end-to-end license plate
+- [2](https://openaccess.thecvf.com/content_ECCV_2018/papers/Zhenbo_Xu_Towards_End-to-End_License_ECCV_2018_paper.pdf) - Xu, Z.; Yang, W.; Meng, A.; Lu, N.; Huang, H.; Ying, C.; Huang, L. Towards end-to-end license plate
 detection and recognition: A large dataset and baseline. In Proceedings of the European Conference on
 Computer Vision (ECCV), Munich, Germany, 8–14 September 2018.
