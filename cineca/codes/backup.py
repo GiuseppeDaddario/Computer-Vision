@@ -17,6 +17,7 @@ import cv2
 from PIL import Image, ImageFilter, ImageEnhance
 from tqdm import tqdm
 from collections import OrderedDict
+import copy
 
 # -------- PyTorch --------- #
 import torch
@@ -46,7 +47,6 @@ os.environ['WANDB_MODE'] = 'disabled'
 DATASET_PATH = "dataset/CCPD2019"
 #TRAINING_PATH = "dataset/CCPD2019/ccpd_base"
 TRAINING_PATH = os.path.join(os.environ["SCRATCH"], "dataset/CCPD2019/ccpd_base")
-VALIDATION_PATH = os.path.join(os.environ["SCRATCH"], "dataset/CCPD_YOLO/ccpd_base/images/val")
 TEST_DIR = "ccpd_challenge"
 #TEST_PATH = f"$SCRATCH/dataset/CCPD_YOLO/{TEST_DIR}/images/test"
 
@@ -55,7 +55,7 @@ TEST_DIR = "ccpd_challenge"
 DATASET_PATH_YOLO = "dataset/CCPD_YOLO"
 TRAINING_CONFIG_YOLO = "dataset/ccpd_2019.yaml"
 PROJECT_PATH = '/leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs'
-YOLO_MODEL_PATH = 'src/YOLO/runs/train2/weights/best.pt'
+YOLO_MODEL_PATH = 'src/YOLO/runs/train/weights/best.pt'
 
 YOLO_IMG_SIZE = 640
 transform_yolo = T.Compose([
@@ -209,14 +209,13 @@ class CCPDImage:
         return f"CCPDImageInfo(plate='{self.plate_str}', valid={self.valid})"
     
 class CCPDDataset(Dataset):
-    def __init__(self, img_dir, transform=None, task="detection", model="baseline", max_samples=None, for_attack_generation=False):
+    def __init__(self, img_dir, transform=None, task="detection", model="baseline", max_samples=None):
         """
         task: 'detection' | 'recognition' | 'end_to_end'
         """
         self.img_dir = Path(img_dir)
         self.task = task
         self.model = model
-        self.for_attack_generation = for_attack_generation
 
         # If not transform and we're in recognition task, use FullRobustAugmentation
         if transform is None and task == "recognition":
@@ -246,11 +245,6 @@ class CCPDDataset(Dataset):
         img_path = img_obj.filename
         image = Image.open(img_path).convert("RGB")
 
-        plate_str = img_obj.plate_str
-        encoded_plate = tokenizer.encode(plate_str)
-        padded_encoded_plate = encoded_plate + [0] * (seq_len - len(encoded_plate))
-        plate_target = torch.tensor(padded_encoded_plate[:seq_len], dtype=torch.long)
-
         if self.task == "detection":
             # Image full + bbox
             if self.transform:
@@ -268,35 +262,30 @@ class CCPDDataset(Dataset):
             image = image.crop((x1, y1, x2, y2))
 
             if self.transform:
-                image = self.transform(image) #img_obj.plate_str
+                image = self.transform(image)
 
-            #plate_code = img_obj.plate_code
-            return image, plate_target
+            plate_code = img_obj.plate_code
+            return image, torch.tensor(plate_code)
 
     
         elif self.task == "end_to_end":
             if self.transform:
                 image = self.transform(image)
-
             if self.model == "baseline":
                 bbox = img_obj.bbox_normalized_baseline
-                #plate_code = torch.tensor(img_obj.plate_code)
+                plate_code = torch.tensor(img_obj.plate_code)
             elif self.model == "yolov5":
                 bbox = img_obj.bbox_yolo
-                #plate_str = img_obj.plate_str
-                #encoded_plate = tokenizer.encode(plate_str)
-                #padded_encoded_plate = encoded_plate + [0] * (seq_len - len(encoded_plate))
-                #plate_code = torch.tensor(padded_encoded_plate[:seq_len])
+                plate_str = img_obj.plate_str
+                encoded_plate = tokenizer.encode(plate_str)
+                padded_encoded_plate = encoded_plate + [0] * (seq_len - len(encoded_plate))
+                plate_code = torch.tensor(padded_encoded_plate[:seq_len])
             
-            if self.for_attack_generation:
-                return image, plate_target, img_obj.filename.name, img_obj.bbox_absolute
-            else:
-                return image, bbox, plate_target
-
+            return image, bbox, plate_code
 
         else:
             raise ValueError(f"Task '{self.task}' not allowed.")
-      
+        
 class FullRobustAugmentation:
     def __init__(self):
         self.base = T.Compose([
@@ -310,36 +299,23 @@ class FullRobustAugmentation:
 
 
        
-    def __call__(self, img, plate_str=None):
+    def __call__(self, img):
         img = self.base(img)  # geometrie e jitter
 
-        heavy_augmentation = False
-        if plate_str is not None:
-            province_char = plate_str[0]
-            if province_char != PROVINCES[0]:  # If it's not the first one
-                heavy_augmentation = True
-
-        # Imposta probabilità e fattori in base al flag
-        p_motion_blur = 0.8 if heavy_augmentation else 0.5
-        p_brightness = 0.8 if heavy_augmentation else 0.5
-        p_occlusion = 0.8 if heavy_augmentation else 0.5
-        p_compression = 0.8 if heavy_augmentation else 0.5
-        p_fog = 0.8 if heavy_augmentation else 0.5 
-
-        if random.random() < p_motion_blur:
+        if random.random() < 0.5:
             img = self.random_motion_blur(img)
 
-        if random.random() < p_brightness:
+        if random.random() < 0.5:
             factor = random.uniform(0.3, 1.8)
             img = TF.adjust_brightness(img, factor)
 
-        if random.random() < p_occlusion:
+        if random.random() < 0.5:
             img = self.random_occlusion(img)
 
-        if random.random() < p_compression:
+        if random.random() < 0.5:
             img = self.random_compression(img)
 
-        if random.random() < p_fog:
+        if random.random() < 0.5:
             img = self.add_fog(img)
 
         return TF.to_tensor(img)
@@ -384,8 +360,7 @@ class Metrics:
         self.correct_plates_full = 0 
         self.mean_iou = []
         self.correct_chars_wo_first = 0
-        self.total_time_detection = 0
-        self.total_time_pipeline = 0
+        self.total_time = 0
         self.total_samples = 0
         self.total_recognition_samples = 0
         self.recognition=recognition
@@ -449,23 +424,15 @@ class Metrics:
                 self.correct_chars_wo_first += 1
 
 
-    def update_detection_time(self, time_spent):
-        self.total_time_detection += time_spent
-        
-    def update_pipeline_time(self, time_spent):
-        self.total_time_pipeline += time_spent
+    def update_time(self, start_time, end_time):
+        self.total_time += end_time - start_time
     
     def compute(self):
         if self.total_samples == 0:
             return {}
-        
-        fps_detection = float(self.total_samples / self.total_time_detection) if self.total_time_detection > 0 else 0.0
-        fps_pipeline = float(self.total_samples / self.total_time_pipeline) if self.total_time_pipeline > 0 else 0.0
-
+            
         results = {
-            # Nuove metriche FPS
-            'FPS_Detection': fps_detection,
-            'FPS_Full': fps_pipeline,
+            'FPS': float(self.total_samples / self.total_time) if self.total_time > 0 else 0.0,
             'Mean_IoU': float(np.mean(self.mean_iou)) if self.mean_iou else 0.0,
             'Detection_Accuracy_IoU_0.7': float(100 * self.correct_detections_iou7 / self.total_samples),
             'Plate_Accuracy_Full': float(100 * self.correct_plates_full / self.total_samples),
@@ -481,223 +448,6 @@ class Metrics:
             for k, v in results.items()
         }
 
-class Evaluator:
-    def __init__(self, det_model,rec_model, device):
-        self.det_model = det_model.to(device)
-        self.rec_model = rec_model.to(device)
-        self.device = device
-        self.start_event = torch.cuda.Event(enable_timing=True)
-        self.end_event = torch.cuda.Event(enable_timing=True)
-        
-        self.transform_recognition = transform_recognition
-        self.transform_detection = transform_detection
-
-        if isinstance(self.det_model, torch.nn.parallel.DistributedDataParallel):
-            self.det_model = self.det_model.module
-        if isinstance(self.rec_model, torch.nn.parallel.DistributedDataParallel):
-            self.rec_model = self.rec_model.module
-        
-    @torch.no_grad()
-    def evaluate(self, dataloader, recognition=False, attack_config=None, debug_prints=False):
-        self.det_model.eval()
-        self.rec_model.eval()
-
-        metrics = Metrics(task="end_to_end",recognition=recognition)
-        is_main_process = not is_initialized() or get_rank() == 0
-        desc = "[Attacking]" if attack_config else "[Evaluating]"
-        iterator = tqdm(enumerate(dataloader), desc=f"{desc} end-to-end", total=len(dataloader)) if is_main_process else enumerate(dataloader)
-
-        debug_print_count = 0
-        max_debug_prints = 20
-
-        for batch_idx, (images, gt_bboxes, plate_labels) in iterator:
-            self.start_event.record()
-     
-            images = images.to(self.device)
-
-            
-            # Detection
-            if isinstance(self.det_model, YOLOv5):
-                gt_bboxes_list = gt_bboxes
-                gt_bboxes = torch.stack(gt_bboxes_list, dim=1).to(self.device)
-
-                start_det_event = torch.cuda.Event(enable_timing=True)
-                end_det_event = torch.cuda.Event(enable_timing=True)
-                start_det_event.record()
-
-                pred_bboxes_norm = self.det_model(images)
-
-                end_det_event.record()
-                torch.cuda.synchronize()
-                detection_time_spent = start_det_event.elapsed_time(end_det_event) / 1000.0  
-                metrics.update_detection_time(detection_time_spent)
-                
-                # Conversion from YOLO to x1y1x2y2
-                xc, yc, w, h = gt_bboxes.T
-                gt_x1, gt_y1, gt_x2, gt_y2 = xc - w / 2, yc - h / 2, xc + w / 2, yc + h / 2
-                gt_bboxes_norm_x1y1 = torch.stack([gt_x1, gt_y1, gt_x2, gt_y2], dim=1)
-                
-                # Computing abs coordinates 640x640
-                scale_tensor = torch.tensor([YOLO_IMG_SIZE] * 4, device=self.device, dtype=torch.float32)
-                pred_bboxes_abs = pred_bboxes_norm * scale_tensor
-                gt_bboxes_abs = gt_bboxes_norm_x1y1 * scale_tensor
-                
-                # Memorize dim for rescaling
-                resize_w, resize_h = YOLO_IMG_SIZE, YOLO_IMG_SIZE
-
-            else: # Baseline
-                gt_bboxes = gt_bboxes.to(self.device)
-
-                start_det_event = torch.cuda.Event(enable_timing=True)
-                end_det_event = torch.cuda.Event(enable_timing=True)
-                start_det_event.record()
-
-                pred_bboxes_norm = self.det_model(images, mode='detection')
-
-                end_det_event.record()
-                torch.cuda.synchronize()
-                detection_time_spent = start_det_event.elapsed_time(end_det_event) / 1000.0  
-                metrics.update_detection_time(detection_time_spent)
-                
-                # Computing abs coordinates 224x224
-                scale_tensor = torch.tensor([W_RESIZE, H_RESIZE, W_RESIZE, H_RESIZE], device=self.device)
-                pred_bboxes_abs = pred_bboxes_norm * scale_tensor
-                gt_bboxes_abs = gt_bboxes * scale_tensor
-                
-                # Memorize dim for rescaling
-                resize_w, resize_h = W_RESIZE, H_RESIZE
-
-            
-            # IoU
-            ious = Metrics.compute_iou(pred_bboxes_abs.cpu().numpy(), gt_bboxes_abs.cpu().numpy())
-            metrics.update_detection(pred_bboxes_abs.cpu().numpy(), gt_bboxes_abs.cpu().numpy(), ious)
-
-            # Recognition
-            valid_mask = torch.from_numpy(ious) > 0.6
-            if valid_mask.any():
-                valid_indices = torch.where(valid_mask)[0]
-                bboxes_for_cropping_resized = pred_bboxes_abs[valid_mask]
-                
-                cropped_images_for_rec = []
-                labels_for_rec = []
-
-                for i, bbox_resized in zip(valid_indices, bboxes_for_cropping_resized):
-                    # Original image path
-                    original_dataset_idx = batch_idx * dataloader.batch_size + i.item()
-                    if original_dataset_idx >= len(dataloader.dataset): continue
-                    img_obj = dataloader.dataset.image_objs[original_dataset_idx]
-                    original_pil_img = Image.open(img_obj.filename).convert("RGB")
-                    
-                    # Rescale bbox
-                    x1_res, y1_res, x2_res, y2_res = bbox_resized
-                    scale_x = IMG_WIDTH / resize_w
-                    scale_y = IMG_HEIGHT / resize_h
-                    x1_orig = int(x1_res * scale_x)
-                    y1_orig = int(y1_res * scale_y)
-                    x2_orig = int(x2_res * scale_x)
-                    y2_orig = int(y2_res * scale_y)
-
-                    # Cropping original img
-                    x1_orig, y1_orig = max(0, x1_orig), max(0, y1_orig)
-                    x2_orig, y2_orig = min(IMG_WIDTH, x2_orig), min(IMG_HEIGHT, y2_orig)
-                    if x1_orig >= x2_orig or y1_orig >= y2_orig: continue #check
-                    cropped_pil = original_pil_img.crop((x1_orig, y1_orig, x2_orig, y2_orig))
-                    transformed_crop = self.transform_recognition(cropped_pil)
-                    cropped_images_for_rec.append(transformed_crop)
-                    labels_for_rec.append(plate_labels[i])
-
-                if cropped_images_for_rec:
-                    cropped_batch = torch.stack(cropped_images_for_rec).to(self.device)
-                    labels_tensor = torch.stack(labels_for_rec).to(cropped_batch.device)
-
-                    eval_batch = cropped_batch
-
-                    outputs = torch.empty(0, labels_tensor.size(1), device=labels_tensor.device, dtype=torch.long)
-                    if isinstance(self.rec_model, PDLPR):
-                        outputs_dirty = self.rec_model(eval_batch)
-                        pred_indices = outputs_dirty.argmax(dim=-1)
-
-                        # -------- INIZIO BLOCCO DI DEBUG --------
-                        if is_main_process and debug_prints and debug_print_count < max_debug_prints:
-                            print("\n" + "="*50)
-                            print(f"DEBUG: Dettagli Batch {batch_idx}")
-                            print("="*50)
-                            
-                            for i in range(pred_indices.size(0)):
-                                if debug_print_count >= max_debug_prints: break
-                                
-                                # 1. Ground Truth
-                                gt_indices = labels_tensor[i].tolist()
-                                gt_text = tokenizer.decode(gt_indices)
-                                
-                                # 2. Predizione "sporca" (indici grezzi)
-                                raw_pred_indices = pred_indices[i].tolist()
-                                
-                                # 3. Predizione "pulita" (dopo post-processing)
-                                try:
-                                    first_pad_index = raw_pred_indices.index(0)
-                                    cleaned_indices = raw_pred_indices[:first_pad_index]
-                                except ValueError:
-                                    cleaned_indices = raw_pred_indices
-                                
-                                # Qui usiamo la logica di pulizia che stai testando.
-                                # Se il tuo modello non genera <EOS>, non fare `[:-1]`
-                                final_sequence_list = cleaned_indices 
-                                final_text = tokenizer.decode(final_sequence_list)
-                                
-                                print(f"\n--- Esempio {debug_print_count+1} ---")
-                                print(f"  Ground Truth: '{gt_text}' -> Indici: {gt_indices}")
-                                print(f"  Predizione   (RAW): " + " ".join(map(str, raw_pred_indices)))
-                                print(f"  Predizione (Clean): '{final_text}' -> Indici: {final_sequence_list}")
-                                
-                                debug_print_count += 1
-                            
-                            if debug_print_count >= max_debug_prints:
-                                print("\n[DEBUG] Limite stampe raggiunto. Disattivazione per il resto della valutazione.")
-                                debug_prints = False # Disattiva per il resto del ciclo
-                        # -------- FINE BLOCCO DI DEBUG --------
-
-                        cleaned_preds_list = []
-                        for i in range(pred_indices.size(0)):
-                            # Removing padding tokens
-                            current_pred_list = pred_indices[i].tolist()
-                            try:
-                                first_pad_index = current_pred_list.index(0)
-                                sequence_without_padding = current_pred_list[:first_pad_index]
-                            except ValueError:
-                                sequence_without_padding = current_pred_list
-       
-                            #removing last token <EOS>
-                            if len(sequence_without_padding) > 0:
-                                final_sequence_list = sequence_without_padding[:-1]
-                            else:
-                                final_sequence_list = []
-                            cleaned_seq_tensor = torch.tensor(final_sequence_list, device=pred_indices.device)
-
-                            padding_needed = labels_tensor.size(1) - len(cleaned_seq_tensor)
-                            padded_seq = torch.nn.functional.pad(cleaned_seq_tensor, (0, padding_needed), 'constant', 0)
-                            cleaned_preds_list.append(padded_seq)
-                            
-                        if cleaned_preds_list:
-                            outputs = torch.stack(cleaned_preds_list)
-                    else:
-                        outputs = self.rec_model(eval_batch, mode='recognition')
-
-                    metrics.update_recognition(outputs, labels_tensor)
-                
-            self.end_event.record()
-            torch.cuda.synchronize()
-            pipeline_time_spent = self.start_event.elapsed_time(self.end_event) / 1000.0
-            metrics.update_pipeline_time(pipeline_time_spent)
-
-        if is_initialized():
-            barrier()
-
-        if is_main_process:
-            return metrics.compute()
-        else:
-            return None
- 
 class Trainer:
     def __init__(self, model, task, device, lr=1e-3, num_classes_list=None):
         self.model = model.to(device)
@@ -744,14 +494,16 @@ class Trainer:
         plt.close()
         disp(f"Loss graph saved in: '{save_path}'")
     
-    def train(self, dataloader=None, val_loader=None, epochs=10, batch_size=50, optimizer="Adam",lr0=1e-3,lrf=1e-5, cos_lr=True,project="runs/train", name="lp_detection", cache="ram"):
+    def train(self, dataloader=None, epochs=10, batch_size=50, optimizer="Adam",lr0=1e-3,lrf=1e-5, cos_lr=True,project="runs/train", name="lp_detection", cache="ram", adversarial=False, epsilon=0.03):
         if self.model_type == "yolov5":
             return self._train_yolov5(epochs=epochs, batch_size=batch_size, optimizer=optimizer, lr0=lr0, lrf=lrf, cos_lr=cos_lr, project=project, name=name, cache=cache)
         elif self.model_type == "pdlpr":
-            return self._train_pdlpr(dataloader, val_loader, epochs)
+            if adversarial:
+                return self._train_pdlpr_adversarial(dataloader, epochs, epsilon=epsilon)
+            else:
+                return self._train_pdlpr(dataloader, epochs)
         else:
             return self._train_baseline(dataloader, epochs)
-
 
     def _train_baseline(self, dataloader, epochs, val_dataloader=None):
         self.model.train()
@@ -837,15 +589,12 @@ class Trainer:
         )
         return self.model
 
-    def _train_pdlpr(self, dataloader, val_dataloader, epochs):
+    def _train_pdlpr(self, dataloader, epochs):
         self.model.train()
         loss_fn = nn.CrossEntropyLoss(ignore_index=0)
         scaler = GradScaler(device="cuda" if torch.cuda.is_available() else "cpu")
 
         train_losses = []
-        val_losses = []
-
-        lambda_reg = 1e-7  # coefficiente di regolarizzazione (da testare e calibrare)
 
         for epoch in range(epochs):
             running_loss = 0.0
@@ -853,58 +602,265 @@ class Trainer:
             for images, targets in pbar:
                 images = images.to(self.device)
                 targets = targets.to(self.device)
-                
-
-                # Abilita la derivazione rispetto agli input
-                images.requires_grad = True
 
                 self.optimizer.zero_grad()
                 with autocast(device_type="cuda"):
                     output = self.model(images)
                     output = output.permute(0, 2, 1)  # [B, SeqLen, C] -> [B, C, SeqLen]
-                    loss_ce = loss_fn(output, targets)
+                    loss = loss_fn(output, targets)
 
-                # Calcolo del gradiente della loss rispetto all'input
-                grad_input = torch.autograd.grad(loss_ce, images, create_graph=True, retain_graph=True)[0]
-                grad_loss = grad_input.pow(2).mean() 
-
-                # Loss totale con regolarizzazione
-                loss_total = loss_ce + lambda_reg * grad_loss
-
-                scaler.scale(loss_total).backward()
+                scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
                 scaler.update()
 
-                running_loss += loss_ce.item()
-                pbar.set_postfix({"batch_loss": loss_ce.item()})
+                running_loss += loss.item()
+                pbar.set_postfix({"batch_loss": loss.item()})
 
-            avg_train_loss = running_loss / len(dataloader)
-            train_losses.append(avg_train_loss)
-            disp(f"Epoch [{epoch+1}/{epochs}] - Train Loss: {avg_train_loss:.4f}")
+            avg_loss = running_loss / len(dataloader)
+            train_losses.append(avg_loss)
+            disp(f"Epoch [{epoch+1}/{epochs}] - Train Loss: {avg_loss:.4f}")
 
-            self.model.eval()
-            val_loss = 0.0
-            with torch.no_grad():
-                for images, targets in tqdm(val_dataloader, desc=f"Epoch {epoch+1}/{epochs} [PDLPR Val]", unit="batch"):
-                    images = images.to(self.device)
-                    targets = targets.to(self.device)
-                    with autocast(device_type="cuda"):
-                        output = self.model(images)
-                        output = output.permute(0, 2, 1)
-                        loss = loss_fn(output, targets)
-                    val_loss += loss.item()
+            torch.save(self.model.state_dict(), f"models/PDLPR/weights/pdlpr_epoch{epoch+1}.pth")
 
-            avg_val_loss = val_loss / len(val_dataloader)
-            val_losses.append(avg_val_loss)
-            disp(f"Epoch [{epoch+1}/{epochs}] - Val Loss: {avg_val_loss:.4f}")
+        # Save final model
+        torch.save(self.model.state_dict(), "models/PDLPR/weights/pdlpr_final.pth")
 
-            torch.save(self.model.state_dict(), f"src/PDLPR/weights/newtrainaug/pdlpr_epoch{epoch+1}.pth")
-
-            self.model.train()
-
-        torch.save(self.model.state_dict(), "src/PDLPR/weights/newtrainaug/pdlpr_final_new.pth")
-        self.plot_epoch_losses(train_losses, val_losses, "PDLPR Loss", "src/PDLPR/logs/newtrainaug")
+        # Plotting
+        self.plot_epoch_losses(train_losses, "PDLPR Loss", "models/PDLPR/logs")
         return self.model
+
+        # In attack.py, dentro la classe Trainer
+
+    def _train_pdlpr_adversarial(self, dataloader, epochs, epsilon=0.03, alpha=0.5):
+        """
+        Esegue l'adversarial training in modo sicuro per DDP.
+        Il trucco è non chiamare MAI il modello DDP due volte prima del backward.
+        """
+        self.model.train() # self.model è il modello wrappato da DDP
+        
+        loss_fn = nn.CrossEntropyLoss(ignore_index=0)
+        scaler = GradScaler(device="cuda" if torch.cuda.is_available() else "cpu")
+
+        disp(f"Inizio Adversarial Training (DDP safe) per {epochs} epoche...")
+        train_losses = []
+
+        for epoch in range(epochs):
+            if hasattr(dataloader.sampler, 'set_epoch'):
+                dataloader.sampler.set_epoch(epoch)
+
+            running_loss = 0.0
+            pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{epochs} [Adv. Training]", unit="batch")
+            
+            for images, targets in pbar:
+                images, targets = images.to(self.device), targets.to(self.device)
+
+                # --- 1. Generazione dell'attacco usando un modello-copia ---
+                # Questo blocco rimane invariato ed è corretto.
+                with torch.no_grad(): # Usiamo no_grad qui per essere sicuri
+                    # Estrai il modello "nudo" da DDP per la copia
+                    inner_model = self.model.module 
+                    # Crea una copia profonda che non sarà tracciata dall'autograd del training
+                    attack_model = copy.deepcopy(inner_model)
+                    attack_model.eval()
+                
+                # Genera le immagini perturbate. La backward interna a fgsm_attack
+                # opererà solo su attack_model, lasciando self.model intatto.
+                perturbed_images = fgsm_attack(attack_model, loss_fn, images, targets, epsilon)
+                del attack_model # Libera memoria
+
+                # --- 2. Training sul modello DDP principale ---
+                self.optimizer.zero_grad()
+                
+                # Concatena i batch puliti e avversari
+                # Ora facciamo UN SOLO forward pass sul modello DDP con il doppio dei dati
+                combined_images = torch.cat([images, perturbed_images], dim=0)
+                combined_targets = torch.cat([targets, targets], dim=0)
+
+                with autocast(device_type="cuda"):
+                    # ESEGUI UN SINGOLO FORWARD PASS
+                    outputs = self.model(combined_images).permute(0, 2, 1)
+                    loss = loss_fn(outputs, combined_targets)
+
+                scaler.scale(loss).backward() 
+                scaler.step(self.optimizer)
+                scaler.update()
+
+                running_loss += loss.item()
+                pbar.set_postfix({"batch_loss": loss.item()})
+
+            avg_loss = running_loss / len(dataloader)
+            train_losses.append(avg_loss)
+            disp(f"Epoch [{epoch+1}/{epochs}] - Adversarial Train Loss: {avg_loss:.4f}")
+        
+        # ... (Salvataggio del modello e plotting) ...
+        robust_model_path = "src/PDLPR/weights/pdlpr_robust.pth"
+        os.makedirs(os.path.dirname(robust_model_path), exist_ok=True)
+        # Salva il modello "nudo"
+        model_to_save = self.model.module if isinstance(self.model, DDP) else self.model
+        torch.save(model_to_save.state_dict(), robust_model_path)
+        disp(f"Modello robusto salvato in: {robust_model_path}")
+
+        self.plot_epoch_losses(train_losses, [], "PDLPR Adversarial Loss", "models/PDLPR/logs")
+        return self.model
+
+
+class Evaluator:
+    def __init__(self, det_model,rec_model, device):
+        self.det_model = det_model.to(device)
+        self.rec_model = rec_model.to(device)
+        self.device = device
+        
+        self.transform_recognition = transform_recognition
+        self.transform_detection = transform_detection
+
+        if isinstance(self.det_model, torch.nn.parallel.DistributedDataParallel):
+            self.det_model = self.det_model.module
+        if isinstance(self.rec_model, torch.nn.parallel.DistributedDataParallel):
+            self.rec_model = self.rec_model.module
+        
+    @torch.no_grad()
+    def evaluate(self, dataloader, recognition=False, attack_config=None):
+        self.det_model.eval()
+        self.rec_model.eval()
+
+        metrics = Metrics(task="end_to_end",recognition=recognition)
+        is_main_process = not is_initialized() or get_rank() == 0
+        desc = "[Attacking]" if attack_config else "[Evaluating]"
+        iterator = tqdm(enumerate(dataloader), desc=f"{desc} end-to-end", total=len(dataloader)) if is_main_process else enumerate(dataloader)
+
+        for batch_idx, (images, gt_bboxes, plate_labels) in iterator:
+            start_time = time.time()
+            images = images.to(self.device)
+            
+            # Detection
+            if isinstance(self.det_model, YOLOv5):
+                gt_bboxes_list = gt_bboxes
+                gt_bboxes = torch.stack(gt_bboxes_list, dim=1).to(self.device)
+                pred_bboxes_norm = self.det_model(images)
+                
+                # Conversion from YOLO to x1y1x2y2
+                xc, yc, w, h = gt_bboxes.T
+                gt_x1, gt_y1, gt_x2, gt_y2 = xc - w / 2, yc - h / 2, xc + w / 2, yc + h / 2
+                gt_bboxes_norm_x1y1 = torch.stack([gt_x1, gt_y1, gt_x2, gt_y2], dim=1)
+                
+                # Computing abs coordinates 640x640
+                scale_tensor = torch.tensor([YOLO_IMG_SIZE] * 4, device=self.device, dtype=torch.float32)
+                pred_bboxes_abs = pred_bboxes_norm * scale_tensor
+                gt_bboxes_abs = gt_bboxes_norm_x1y1 * scale_tensor
+                
+                # Memorize dim for rescaling
+                resize_w, resize_h = YOLO_IMG_SIZE, YOLO_IMG_SIZE
+
+            else: # Baseline
+                gt_bboxes = gt_bboxes.to(self.device)
+                pred_bboxes_norm = self.det_model(images, mode='detection')
+                
+                # Computing abs coordinates 224x224
+                scale_tensor = torch.tensor([W_RESIZE, H_RESIZE, W_RESIZE, H_RESIZE], device=self.device)
+                pred_bboxes_abs = pred_bboxes_norm * scale_tensor
+                gt_bboxes_abs = gt_bboxes * scale_tensor
+                
+                # Memorize dim for rescaling
+                resize_w, resize_h = W_RESIZE, H_RESIZE
+            
+            # IoU
+            ious = Metrics.compute_iou(pred_bboxes_abs.cpu().numpy(), gt_bboxes_abs.cpu().numpy())
+            metrics.update_detection(pred_bboxes_abs.cpu().numpy(), gt_bboxes_abs.cpu().numpy(), ious)
+
+            # Recognition
+            valid_mask = torch.from_numpy(ious) > 0.6
+            if valid_mask.any():
+                valid_indices = torch.where(valid_mask)[0]
+                bboxes_for_cropping_resized = pred_bboxes_abs[valid_mask]
+                
+                cropped_images_for_rec = []
+                labels_for_rec = []
+
+                for i, bbox_resized in zip(valid_indices, bboxes_for_cropping_resized):
+                    # Original image path
+                    original_dataset_idx = batch_idx * dataloader.batch_size + i.item()
+                    if original_dataset_idx >= len(dataloader.dataset): continue
+                    img_obj = dataloader.dataset.image_objs[original_dataset_idx]
+                    original_pil_img = Image.open(img_obj.filename).convert("RGB")
+                    
+                    # Rescale bbox
+                    x1_res, y1_res, x2_res, y2_res = bbox_resized
+                    scale_x = IMG_WIDTH / resize_w
+                    scale_y = IMG_HEIGHT / resize_h
+                    x1_orig = int(x1_res * scale_x)
+                    y1_orig = int(y1_res * scale_y)
+                    x2_orig = int(x2_res * scale_x)
+                    y2_orig = int(y2_res * scale_y)
+
+                    # Cropping original img
+                    x1_orig, y1_orig = max(0, x1_orig), max(0, y1_orig)
+                    x2_orig, y2_orig = min(IMG_WIDTH, x2_orig), min(IMG_HEIGHT, y2_orig)
+                    if x1_orig >= x2_orig or y1_orig >= y2_orig: continue #check
+                    cropped_pil = original_pil_img.crop((x1_orig, y1_orig, x2_orig, y2_orig))
+                    transformed_crop = self.transform_recognition(cropped_pil)
+                    cropped_images_for_rec.append(transformed_crop)
+                    labels_for_rec.append(plate_labels[i])
+
+                if cropped_images_for_rec:
+                    cropped_batch = torch.stack(cropped_images_for_rec).to(self.device)
+                    labels_tensor = torch.stack(labels_for_rec).to(cropped_batch.device)
+
+                    # Attack logic
+                    if attack_config and self.rec_model:
+                        with torch.enable_grad():
+                            self.rec_model.train()
+
+                            perturbed_batch = fgsm_attack(
+                                model=self.rec_model,
+                                loss_fn=nn.CrossEntropyLoss(ignore_index=0),
+                                images=cropped_batch.clone(),
+                                labels=labels_tensor,
+                                epsilon=attack_config['epsilon']
+                            )
+                            eval_batch = perturbed_batch.detach()
+                            self.rec_model.eval()
+                    else:
+                        eval_batch = cropped_batch
+
+                    outputs = torch.empty(0, labels_tensor.size(1), device=labels_tensor.device, dtype=torch.long)
+                    if isinstance(self.rec_model, PDLPR):
+                        outputs_dirty = self.rec_model(eval_batch)
+                        pred_indices = outputs_dirty.argmax(dim=-1)
+                        cleaned_preds_list = []
+                        for i in range(pred_indices.size(0)):
+                            # Removing padding tokens
+                            current_pred_list = pred_indices[i].tolist()
+                            try:
+                                first_pad_index = current_pred_list.index(0)
+                                sequence_without_padding = current_pred_list[:first_pad_index]
+                            except ValueError:
+                                sequence_without_padding = current_pred_list
+                            # removing last token <EOS>
+                            if len(sequence_without_padding) > 0:
+                                final_sequence_list = sequence_without_padding[:-1]
+                            else:
+                                final_sequence_list = []
+                            cleaned_seq_tensor = torch.tensor(final_sequence_list, device=pred_indices.device)
+                            padding_needed = labels_tensor.size(1) - len(cleaned_seq_tensor)
+                            padded_seq = torch.nn.functional.pad(cleaned_seq_tensor, (0, padding_needed), 'constant', 0)
+                            cleaned_preds_list.append(padded_seq)
+                            if cleaned_preds_list:
+                                outputs = torch.stack(cleaned_preds_list)
+                    else:
+                        outputs = self.rec_model(eval_batch, mode='recognition')
+
+                    metrics.update_recognition(outputs, labels_tensor)
+                
+            end_time = time.time()
+            metrics.update_time(start_time, end_time)
+
+        if is_initialized():
+            barrier()
+
+        if is_main_process:
+            return metrics.compute()
+        else:
+            return None
 
 
 # MODELS #
@@ -927,6 +883,34 @@ def collate_fn_end_to_end_filter(batch):
     if not batch:
         return torch.empty(0, 3, 640, 640), torch.empty(0, 4), torch.empty(0, seq_len)
     return torch.utils.data.dataloader.default_collate(batch)
+
+def collate_fn_recognition(batch):
+    # Filtra i campioni che potrebbero avere problemi (es. etichette non valide)
+    # Il batch in input è (image, plate_code_tensor)
+    batch = [sample for sample in batch if sample[1] is not None and len(sample[1]) > 0]
+    if not batch:
+        # Se il batch è vuoto dopo il filtraggio, restituisce tensori vuoti
+        return torch.empty(0, 3, 64, 128), torch.empty(0, seq_len, dtype=torch.long)
+
+    images, plate_codes = zip(*batch)
+    
+    # Stack delle immagini
+    images = torch.stack(images)
+    
+    # Padding manuale dei target alla lunghezza fissa 'seq_len'
+    padded_codes = []
+    for code in plate_codes:
+        # Assicurati che il codice non sia più lungo di seq_len
+        code = code[:seq_len]
+        # Calcola quanto padding aggiungere
+        padding_needed = seq_len - len(code)
+        # Applica il padding (con valore 0)
+        padded_code = F.pad(code, (0, padding_needed), 'constant', 0)
+        padded_codes.append(padded_code)
+        
+    targets = torch.stack(padded_codes).long() # Assicura che sia LongTensor
+    
+    return images, targets
 
 # --- IGFE ---
 class FocusStructure(nn.Module):
@@ -1056,9 +1040,11 @@ class AddNorm(nn.Module):
     def forward(self, x, sublayer_out):
         return self.norm(x + sublayer_out)
 
+# SOSTITUZIONE FINALE PER DecodingModule
 class DecodingModule(nn.Module):
     def __init__(self, d_model=512, nhead=8, height=16, width=16):
         super().__init__()
+        # I layer dell'init rimangono IDENTICI a prima, quindi i pesi sono compatibili.
         self.pos_enc = PositionalEncoding2D(d_model, height, width)
         self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=nhead)
         self.cross_cnn1 = CNNBlock(d_model, d_model, kernel_size=1, stride=1, padding=0)
@@ -1072,25 +1058,47 @@ class DecodingModule(nn.Module):
         self.addnorm1 = AddNorm(d_model)
         self.addnorm2 = AddNorm(d_model)
         self.addnorm3 = AddNorm(d_model)
+
     def forward(self, x, encoder_out):
-        x = self.pos_enc(x)
-        B, C, H, W = x.shape
-        x_ = x.permute(2, 3, 0, 1).reshape(H*W, B, C)
-        self_attn_out, _ = self.self_attn(x_, x_, x_)
-        self_attn_out = self.addnorm1(x_.permute(1, 0, 2), self_attn_out.permute(1, 0, 2))
-        self_attn_out = self_attn_out.permute(1, 0, 2)
-        x = self_attn_out.reshape(H, W, B, C).permute(2, 3, 0, 1)
+        # --- Preparazione Input ---
+        # Applica l'encoding posizionale all'input x
+        x_with_pos = self.pos_enc(x)
+
+        B, C, H, W = x_with_pos.shape
+        # Prepara la vista per la self-attention: [Seq, Batch, Feat]
+        qkv = x_with_pos.permute(2, 3, 0, 1).reshape(H * W, B, C)
+
+        # --- 1. Self-Attention ---
+        # Usa la stessa vista per query, key, value
+        self_attn_res, _ = self.self_attn(qkv, qkv, qkv)
+        # Add & Norm: il residual è qkv, il risultato è self_attn_res
+        # self_attn_out ha forma [Seq, Batch, Feat]
+        self_attn_out = self.addnorm1(qkv.permute(1,0,2), self_attn_res.permute(1,0,2)).permute(1,0,2)
+
+        # --- 2. Cross-Attention ---
+        # Prepara l'output dell'encoder
         enc = self.cross_cnn1(encoder_out)
         enc = self.cross_cnn2(enc)
         B_enc, C_enc, H_enc, W_enc = enc.shape
-        enc_ = enc.permute(2, 3, 0, 1).reshape(H_enc*W_enc, B_enc, C_enc)
-        x_ = x.permute(2, 3, 0, 1).reshape(H*W, B, C)
-        cross_attn_out, _ = self.cross_attn(x_, enc_, enc_)
-        cross_attn_out = self.addnorm2(x_.permute(1, 0, 2), cross_attn_out.permute(1, 0, 2))
-        cross_attn_out = cross_attn_out.permute(1, 0, 2)
-        x = cross_attn_out.reshape(H, W, B, C).permute(2, 3, 0, 1)
-        ff_out = self.feed_forward(x)
-        out = self.addnorm3(x.permute(0, 2, 3, 1).reshape(B, -1, C), ff_out.permute(0, 2, 3, 1).reshape(B, -1, C))
+        # Vista per key e value dall'encoder: [Seq_enc, Batch, Feat]
+        kv_enc = enc.permute(2, 3, 0, 1).reshape(H_enc * W_enc, B_enc, C_enc)
+
+        # La query (q) viene dal risultato della self-attention (self_attn_out)
+        # Key (k) e Value (v) vengono dall'encoder (kv_enc)
+        cross_attn_res, _ = self.cross_attn(query=self_attn_out, key=kv_enc, value=kv_enc)
+        # Add & Norm: il residual è self_attn_out, il risultato è cross_attn_res
+        cross_attn_out = self.addnorm2(self_attn_out.permute(1,0,2), cross_attn_res.permute(1,0,2)).permute(1,0,2)
+
+        # --- 3. Feed Forward ---
+        # Riporta al formato immagine per le Conv2d: [Batch, Feat, H, W]
+        ff_input = cross_attn_out.reshape(H, W, B, C).permute(2, 3, 0, 1)
+        ff_res = self.feed_forward(ff_input)
+        
+        # Add & Norm: il residual è ff_input, il risultato è ff_res
+        # L'input per addnorm3 deve essere [B, ..., C]
+        out = self.addnorm3(ff_input.permute(0,2,3,1).reshape(B, -1, C), ff_res.permute(0,2,3,1).reshape(B, -1, C))
+
+        # Riporta al formato finale richiesto
         out = out.reshape(B, H, W, C).permute(0, 3, 1, 2)
         return out
 
@@ -1118,8 +1126,8 @@ class PDLPR(nn.Module):
     def __init__(self,
                  model_path=None,
                  in_channels=3,
-                 base_channels=512,
-                 encoder_d_model=512,
+                 base_channels=256,
+                 encoder_d_model=256,
                  encoder_nhead=8,
                  encoder_height=16,
                  encoder_width=16,
@@ -1151,15 +1159,8 @@ class PDLPR(nn.Module):
             seq_len=seq_len
         )
 
-        state_dict = torch.load(model_path, map_location=DEVICE)
-        if list(state_dict.keys())[0].startswith('module.'):
-            new_state_dict = OrderedDict()
-            for k, v in state_dict.items():
-                name = k[7:]
-                new_state_dict[name] = v
-            self.load_state_dict(new_state_dict)
-        else:
-            self.load_state_dict(state_dict)
+        if model_path:
+            self.load_state_dict(torch.load(model_path, map_location=DEVICE))
         
     def forward(self, x):
         x = self.igfe(x)
@@ -1197,60 +1198,91 @@ class YOLOv5(nn.Module):
             return torch.stack(bboxes)
         return preds
 
-def collate_fn_recognition(batch):
-    batch = [sample for sample in batch if sample[1] is not None and len(sample[1]) > 0]
-    if not batch:
-        return torch.empty(0, 3, 64, 128), torch.empty(0, seq_len, dtype=torch.long)
+def fgsm_attack(model, loss_fn, images, labels, epsilon):
+    """
+    Genera immagini avversarie con il metodo FGSM.
+    """
+    is_training = model.training
+    model.eval()
 
-    images, plate_codes = zip(*batch)
-    images = torch.stack(images)
+    images.requires_grad = True
+
+    outputs = model(images)
+    outputs_for_loss = outputs.permute(0, 2, 1)
+    loss = loss_fn(outputs_for_loss, labels)
+
+    model.zero_grad()
+    loss.backward()
     
-    padded_codes = []
-    for code in plate_codes:
-        code = code[:seq_len]
-        padding_needed = seq_len - len(code)
-        padded_code = F.pad(code, (0, padding_needed), 'constant', 0)
-        padded_codes.append(padded_code)
-    targets = torch.stack(padded_codes).long() 
+    sign_data_grad = images.grad.data.sign()
+    perturbed_image = images + epsilon * sign_data_grad
+    perturbed_image = torch.clamp(perturbed_image, 0, 1)
+
+    if is_training:
+        model.train()
     
-    return images, targets
+    return perturbed_image.detach()
+
 
 
 
 def main():
-
+    torch.autograd.set_detect_anomaly(True)
+    # -------------------------
+    # Setup
+    # -------------------------
+    yolo_model_path = "src/YOLO/runs/train/weights/best.pt"
+    pdlpr_orig_path = "src/PDLPR/weights/pdlpr_final.pth"
+    pdlpr_robust_path = "src/PDLPR/weights/pdlpr_robust.pth"
+    epsilon = 0.03
     
-    transform_pdlpr = T.Compose([
-    T.Resize((48, 144)),  
-    T.ToTensor(),
-])
-    
-    # Datasets
-    train_dataset_rec = CCPDDataset(TRAINING_PATH, transform=None, task='recognition', model="pdlpr")
-    train_sampler_rec = DistributedSampler(train_dataset_rec)
-    train_loader_rec = DataLoader(train_dataset_rec, batch_size=256, sampler=train_sampler_rec, num_workers=8, collate_fn=collate_fn_recognition)
-    disp(f"Train detection: {len(train_dataset_rec)} images")
+    # -------------------------
+    # 1. Adversarial Training (se necessario)
+    # -------------------------
+    if not os.path.exists(pdlpr_robust_path):
+        disp("Modello robusto non trovato. Avvio adversarial training...")
+        pdlpr_model_to_train = PDLPR(
+        model_path=pdlpr_orig_path,
+        in_channels=3,
+        base_channels=256,
+        encoder_d_model=256,
+        encoder_nhead=4,
+        encoder_height=16,
+        encoder_width=16,
+        decoder_num_layers=2,
+        num_classes=num_classes,
+        seq_len=seq_len
+    )
+        num_classes_list = [len(PROVINCES), len(ALPHABETS)] + [len(ADS)] * 5 
 
-    val_dataset_rec = CCPDDataset(VALIDATION_PATH, transform=transform_pdlpr, task='recognition', model="pdlpr")
-    tval_sampler_rec = DistributedSampler(val_dataset_rec)
-    val_loader_rec = DataLoader(val_dataset_rec, batch_size=256, sampler=tval_sampler_rec, num_workers=8, collate_fn=collate_fn_recognition)
-    disp(f"Train detection: {len(val_dataset_rec)} images")
-
-    #train_dataset_rec = CCPDDataset(TRAINING_PATH, transform=transform_recognition, task='recognition', model="baseline")
-    #train_sampler_rec = DistributedSampler(train_dataset_rec)
-    #train_loader_rec = DataLoader(train_dataset_rec, batch_size=256, sampler=train_sampler_rec, num_workers=8)
-    #disp(f"Train recognition: {len(train_dataset_rec)} images")
-
-    
-
-
+        # Dataloader per il training (recognition task)
+        transform_rec = T.Compose([T.Resize((64, 128)), T.ToTensor()])
+        train_dataset = CCPDDataset(TRAINING_PATH, transform=transform_rec, task='recognition', model="pdlpr", max_samples=20000)
+        train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=4, collate_fn=collate_fn_recognition) # USARE COLLATe
+        
+        trainer = Trainer(pdlpr_model_to_train, task='recognition', num_classes_list=num_classes_list, device=DEVICE, lr=5e-5) # LR più basso per fine-tuning
+        trainer.train(dataloader=train_loader, epochs=5, adversarial=True, epsilon=epsilon)
+    else:
+        disp(f"Trovato modello robusto: {pdlpr_robust_path}")
 
     # -------------------------
-    # Loading models
+    # 2. Caricamento modelli e setup per la valutazione
     # -------------------------
-    yolov5_model = YOLOv5(model_path=YOLO_MODEL_PATH, device=DEVICE)
-    pdlpr_model = PDLPR(
-        model_path="src/PDLPR/weights/pdlpr_final.pth",
+    yolov5_model = YOLOv5(model_path=yolo_model_path, device=DEVICE)
+    pdlpr_original = PDLPR(
+        model_path=pdlpr_orig_path,
+        in_channels=3,
+        base_channels=256,
+        encoder_d_model=256,
+        encoder_nhead=4,
+        encoder_height=16,
+        encoder_width=16,
+        decoder_num_layers=2,
+        num_classes=num_classes,
+        seq_len=seq_len
+    )
+    pdlpr_robust = PDLPR(
+        model_path=pdlpr_robust_path,
         in_channels=3,
         base_channels=256,
         encoder_d_model=256,
@@ -1262,79 +1294,35 @@ def main():
         seq_len=seq_len
     )
     
-    num_classes_list = [len(PROVINCES), len(ALPHABETS)] + [len(ADS)] * 5 
+    evaluator_original = Evaluator(det_model=yolov5_model, rec_model=pdlpr_original, device=DEVICE)
+    evaluator_robust = Evaluator(det_model=yolov5_model, rec_model=pdlpr_robust, device=DEVICE)
+
+    # Dataloader di test (end-to-end)
+    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_challenge", "images", "test")
+    test_dataset = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=2000)
+    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=collate_fn_recognition, num_workers=8)
     
     # -------------------------
-    # Training models
+    # 3. Esecuzione delle valutazioni
     # -------------------------
+    disp("\n--- Valutazione su DATI PULITI ---")
+    metrics_orig_clean = evaluator_original.evaluate(test_loader, recognition=True)
+    disp(f"Modello Originale (Clean): {metrics_orig_clean}")
+    
+    metrics_robust_clean = evaluator_robust.evaluate(test_loader, recognition=True)
+    disp(f"Modello Robusto (Clean):   {metrics_robust_clean}")
 
-    trainer = Trainer(pdlpr_model, task='recognition', num_classes_list=num_classes_list, device=DEVICE) 
-    pdlpr_model = trainer.train(dataloader=train_loader_rec, val_loader=val_loader_rec, epochs=20)
-
-
-    # -------------------------
-    # Evaluation detection and recognition (end-to-end)
-    # -------------------------
-
-    evaluator = Evaluator(det_model=yolov5_model, rec_model=pdlpr_model, device=DEVICE)
-
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_challenge", "images", "test")
-    test_challenge = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_challenge = DataLoader(test_challenge, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (challenge): {len(test_challenge)} images")
-
-    metrics_challenge = evaluator.evaluate(test_loader_challenge, recognition=True)
-    disp(f"End-to-End Results (challenge):{metrics_challenge}")
-
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_blur", "images", "test")
-    test_blur = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_blur = DataLoader(test_blur, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (blur): {len(test_blur)} images")
-
-    metrics_blur = evaluator.evaluate(test_loader_blur, recognition=True)
-    disp(f"End-to-End Results (blur):{metrics_blur}")
-
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_tilt", "images", "test")
-    test_tilt = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_tilt = DataLoader(test_tilt, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (tilt): {len(test_tilt)} images")
-
-    metrics_tilt = evaluator.evaluate(test_loader_tilt, recognition=True)
-    disp(f"End-to-End Results (tilt):{metrics_tilt}")
-
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_rotate", "images", "test")
-    test_rotate = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_rotate = DataLoader(test_rotate, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (rotate): {len(test_rotate)} images")
-
-    metrics_rotate = evaluator.evaluate(test_loader_rotate, recognition=True)
-    disp(f"End-to-End Results (rotate):{metrics_rotate}")
-
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_weather", "images", "test")
-    test_weather = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_weather = DataLoader(test_weather, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (weather): {len(test_weather)} images")
-
-    metrics_weather = evaluator.evaluate(test_loader_weather, recognition=True)
-    disp(f"End-to-End Results (weather):{metrics_weather}")
-
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_fn", "images", "test")
-    test_fn = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=20000)
-    test_loader_fn = DataLoader(test_fn, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (fn): {len(test_fn)} images")
-
-    metrics_fn = evaluator.evaluate(test_loader_fn, recognition=True)
-    disp(f"End-to-End Results (fn):{metrics_fn}")
-
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_db", "images", "test")
-    test_db = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=20000)
-    test_loader_db = DataLoader(test_db, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (db): {len(test_db)} images")
-
-    metrics_db = evaluator.evaluate(test_loader_db, recognition=True)
-    disp(f"End-to-End Results (db):{metrics_db}")
+    disp(f"\n--- Valutazione su DATI ATTACCATI (epsilon={epsilon}) ---")
+    attack_config = {'epsilon': epsilon}
+    
+    metrics_orig_attacked = evaluator_original.evaluate(test_loader, recognition=True, attack_config=attack_config)
+    disp(f"Modello Originale (Attacked): {metrics_orig_attacked}")
+    
+    metrics_robust_attacked = evaluator_robust.evaluate(test_loader, recognition=True, attack_config=attack_config)
+    disp(f"Modello Robusto (Attacked):   {metrics_robust_attacked}")
 
     cleanup_ddp()
+
 if __name__ == "__main__":
     main()
     

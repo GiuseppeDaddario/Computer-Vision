@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=training
-#SBATCH --time=24:00:00                       
+#SBATCH --time=4:00:00                       
 #SBATCH --nodes=1                             
 #SBATCH --ntasks-per-node=1                   
 #SBATCH --cpus-per-task=32                    
@@ -22,10 +22,10 @@ cd /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5
 COLUMNS=80 PYTHONWARNINGS="ignore::FutureWarning" \
 python -m torch.distributed.run --nproc_per_node=4 train.py \
   --data /leonardo/home/userexternal/gdaddari/Computer-Vision/dataset/ccpd_2019.yaml \
-  --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/yolov5s.pt \
+  --weights /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs/train/weights/best.pt \
   --batch-size 256 \
   --img 640 \
-  --epochs 25 \
+  --epochs 20 \
   --optimizer Adam \
   --hyp /leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/hyp.yaml \
   --cos-lr \

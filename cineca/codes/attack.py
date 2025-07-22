@@ -17,6 +17,7 @@ import cv2
 from PIL import Image, ImageFilter, ImageEnhance
 from tqdm import tqdm
 from collections import OrderedDict
+import copy
 
 # -------- PyTorch --------- #
 import torch
@@ -24,7 +25,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch import autocast
 from torch.amp import GradScaler
-from torch.utils.data import Dataset, DataLoader, random_split, Subset
+from torch.utils.data import Dataset, DataLoader, random_split, Subset, ConcatDataset
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import get_rank, is_initialized, barrier
@@ -35,6 +36,7 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 from torchvision import models, datasets
+from torchvision.utils import save_image
 
 # -------- Local Imports --------- #
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
@@ -45,7 +47,7 @@ os.environ['WANDB_MODE'] = 'disabled'
 # -------- General paths --------- #
 DATASET_PATH = "dataset/CCPD2019"
 #TRAINING_PATH = "dataset/CCPD2019/ccpd_base"
-TRAINING_PATH = os.path.join(os.environ["SCRATCH"], "dataset/CCPD2019/ccpd_base")
+TRAINING_PATH = os.path.join(os.environ["SCRATCH"], "dataset/CCPD_YOLO/ccpd_base/images/train")
 VALIDATION_PATH = os.path.join(os.environ["SCRATCH"], "dataset/CCPD_YOLO/ccpd_base/images/val")
 TEST_DIR = "ccpd_challenge"
 #TEST_PATH = f"$SCRATCH/dataset/CCPD_YOLO/{TEST_DIR}/images/test"
@@ -55,7 +57,7 @@ TEST_DIR = "ccpd_challenge"
 DATASET_PATH_YOLO = "dataset/CCPD_YOLO"
 TRAINING_CONFIG_YOLO = "dataset/ccpd_2019.yaml"
 PROJECT_PATH = '/leonardo/home/userexternal/gdaddari/Computer-Vision/src/YOLO/runs'
-YOLO_MODEL_PATH = 'src/YOLO/runs/train2/weights/best.pt'
+YOLO_MODEL_PATH = 'src/YOLO/runs/train/weights/best.pt'
 
 YOLO_IMG_SIZE = 640
 transform_yolo = T.Compose([
@@ -118,12 +120,12 @@ def setup_ddp():
     world_size = int(os.environ["WORLD_SIZE"])
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank % torch.cuda.device_count())
-    return rank
+    return rank, world_size
 
 def cleanup_ddp():
     dist.destroy_process_group()
 
-rank = setup_ddp()
+rank, world_size = setup_ddp()
 DEVICE = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
 
 def disp(msg):
@@ -296,7 +298,7 @@ class CCPDDataset(Dataset):
 
         else:
             raise ValueError(f"Task '{self.task}' not allowed.")
-      
+        
 class FullRobustAugmentation:
     def __init__(self):
         self.base = T.Compose([
@@ -744,7 +746,7 @@ class Trainer:
         plt.close()
         disp(f"Loss graph saved in: '{save_path}'")
     
-    def train(self, dataloader=None, val_loader=None, epochs=10, batch_size=50, optimizer="Adam",lr0=1e-3,lrf=1e-5, cos_lr=True,project="runs/train", name="lp_detection", cache="ram"):
+    def train(self, dataloader=None, val_loader=None, epochs=10, batch_size=50, optimizer="Adam",lr0=1e-3,lrf=1e-5, cos_lr=True,project="runs/train", name="lp_detection", cache="ram", adversarial=False, epsilon=0.03):
         if self.model_type == "yolov5":
             return self._train_yolov5(epochs=epochs, batch_size=batch_size, optimizer=optimizer, lr0=lr0, lrf=lrf, cos_lr=cos_lr, project=project, name=name, cache=cache)
         elif self.model_type == "pdlpr":
@@ -898,35 +900,51 @@ class Trainer:
             val_losses.append(avg_val_loss)
             disp(f"Epoch [{epoch+1}/{epochs}] - Val Loss: {avg_val_loss:.4f}")
 
-            torch.save(self.model.state_dict(), f"src/PDLPR/weights/newtrainaug/pdlpr_epoch{epoch+1}.pth")
+            torch.save(self.model.state_dict(), f"src/PDLPR/weights/newtrain/pdlpr_epoch{epoch+1}.pth")
 
             self.model.train()
 
-        torch.save(self.model.state_dict(), "src/PDLPR/weights/newtrainaug/pdlpr_final_new.pth")
-        self.plot_epoch_losses(train_losses, val_losses, "PDLPR Loss", "src/PDLPR/logs/newtrainaug")
+        torch.save(self.model.state_dict(), "src/PDLPR/weights/newtrain/pdlpr_final_new.pth")
+        self.plot_epoch_losses(train_losses, val_losses, "PDLPR Loss", "src/PDLPR/logs/newtrain")
         return self.model
 
 
+
 # MODELS #
-def collate_fn(batch):
-    images, texts = zip(*batch)
-    images = torch.stack(images)
-    token_seqs = [torch.tensor(tokenizer.encode(t)[:seq_len] + [0]*(seq_len-len(t))) for t in texts]
-    targets = torch.stack(token_seqs)  # [B, seq_len]
-    if (targets >= num_classes).any() or (targets < 0).any():
-        print("[ERROR] Out of range, Excerpt:")
-        for t in texts:
-            print("Label:", t, "Encoded:", tokenizer.encode(t))
-        print("Target tensor:", targets)
-        print("num_classes:", num_classes)
-        raise ValueError("Out of range For CrossEntropyLoss!")
-    return images, targets
 
 def collate_fn_end_to_end_filter(batch):
     batch = [sample for sample in batch if sample[1] is not None]
     if not batch:
         return torch.empty(0, 3, 640, 640), torch.empty(0, 4), torch.empty(0, seq_len)
     return torch.utils.data.dataloader.default_collate(batch)
+
+def collate_fn_recognition(batch):
+    batch = [sample for sample in batch if sample[1] is not None and len(sample[1]) > 0]
+    if not batch:
+        return torch.empty(0, 3, 64, 128), torch.empty(0, seq_len, dtype=torch.long)
+
+    images, plate_codes = zip(*batch)
+    images = torch.stack(images)
+    
+    padded_codes = []
+    for code in plate_codes:
+        code = code[:seq_len]
+        padding_needed = seq_len - len(code)
+        padded_code = F.pad(code, (0, padding_needed), 'constant', 0)
+        padded_codes.append(padded_code)
+    targets = torch.stack(padded_codes).long() 
+    
+    return images, targets
+
+def collate_fn_for_attack_generation(batch):
+    batch = [sample for sample in batch if sample[1] is not None and sample[3] is not None]
+    if not batch:
+        return torch.empty(0), torch.empty(0), [], []
+
+    images, plate_codes, filenames, bboxes_abs = zip(*batch)
+    plate_codes = torch.stack(plate_codes, 0)
+    
+    return images, plate_codes, list(filenames), list(bboxes_abs)
 
 # --- IGFE ---
 class FocusStructure(nn.Module):
@@ -1056,9 +1074,11 @@ class AddNorm(nn.Module):
     def forward(self, x, sublayer_out):
         return self.norm(x + sublayer_out)
 
+# SOSTITUZIONE FINALE PER DecodingModule
 class DecodingModule(nn.Module):
     def __init__(self, d_model=512, nhead=8, height=16, width=16):
         super().__init__()
+        # I layer dell'init rimangono IDENTICI a prima, quindi i pesi sono compatibili.
         self.pos_enc = PositionalEncoding2D(d_model, height, width)
         self.self_attn = nn.MultiheadAttention(embed_dim=d_model, num_heads=nhead)
         self.cross_cnn1 = CNNBlock(d_model, d_model, kernel_size=1, stride=1, padding=0)
@@ -1072,25 +1092,47 @@ class DecodingModule(nn.Module):
         self.addnorm1 = AddNorm(d_model)
         self.addnorm2 = AddNorm(d_model)
         self.addnorm3 = AddNorm(d_model)
+
     def forward(self, x, encoder_out):
-        x = self.pos_enc(x)
-        B, C, H, W = x.shape
-        x_ = x.permute(2, 3, 0, 1).reshape(H*W, B, C)
-        self_attn_out, _ = self.self_attn(x_, x_, x_)
-        self_attn_out = self.addnorm1(x_.permute(1, 0, 2), self_attn_out.permute(1, 0, 2))
-        self_attn_out = self_attn_out.permute(1, 0, 2)
-        x = self_attn_out.reshape(H, W, B, C).permute(2, 3, 0, 1)
+        # --- Preparazione Input ---
+        # Applica l'encoding posizionale all'input x
+        x_with_pos = self.pos_enc(x)
+
+        B, C, H, W = x_with_pos.shape
+        # Prepara la vista per la self-attention: [Seq, Batch, Feat]
+        qkv = x_with_pos.permute(2, 3, 0, 1).reshape(H * W, B, C)
+
+        # --- 1. Self-Attention ---
+        # Usa la stessa vista per query, key, value
+        self_attn_res, _ = self.self_attn(qkv, qkv, qkv)
+        # Add & Norm: il residual è qkv, il risultato è self_attn_res
+        # self_attn_out ha forma [Seq, Batch, Feat]
+        self_attn_out = self.addnorm1(qkv.permute(1,0,2), self_attn_res.permute(1,0,2)).permute(1,0,2)
+
+        # --- 2. Cross-Attention ---
+        # Prepara l'output dell'encoder
         enc = self.cross_cnn1(encoder_out)
         enc = self.cross_cnn2(enc)
         B_enc, C_enc, H_enc, W_enc = enc.shape
-        enc_ = enc.permute(2, 3, 0, 1).reshape(H_enc*W_enc, B_enc, C_enc)
-        x_ = x.permute(2, 3, 0, 1).reshape(H*W, B, C)
-        cross_attn_out, _ = self.cross_attn(x_, enc_, enc_)
-        cross_attn_out = self.addnorm2(x_.permute(1, 0, 2), cross_attn_out.permute(1, 0, 2))
-        cross_attn_out = cross_attn_out.permute(1, 0, 2)
-        x = cross_attn_out.reshape(H, W, B, C).permute(2, 3, 0, 1)
-        ff_out = self.feed_forward(x)
-        out = self.addnorm3(x.permute(0, 2, 3, 1).reshape(B, -1, C), ff_out.permute(0, 2, 3, 1).reshape(B, -1, C))
+        # Vista per key e value dall'encoder: [Seq_enc, Batch, Feat]
+        kv_enc = enc.permute(2, 3, 0, 1).reshape(H_enc * W_enc, B_enc, C_enc)
+
+        # La query (q) viene dal risultato della self-attention (self_attn_out)
+        # Key (k) e Value (v) vengono dall'encoder (kv_enc)
+        cross_attn_res, _ = self.cross_attn(query=self_attn_out, key=kv_enc, value=kv_enc)
+        # Add & Norm: il residual è self_attn_out, il risultato è cross_attn_res
+        cross_attn_out = self.addnorm2(self_attn_out.permute(1,0,2), cross_attn_res.permute(1,0,2)).permute(1,0,2)
+
+        # --- 3. Feed Forward ---
+        # Riporta al formato immagine per le Conv2d: [Batch, Feat, H, W]
+        ff_input = cross_attn_out.reshape(H, W, B, C).permute(2, 3, 0, 1)
+        ff_res = self.feed_forward(ff_input)
+        
+        # Add & Norm: il residual è ff_input, il risultato è ff_res
+        # L'input per addnorm3 deve essere [B, ..., C]
+        out = self.addnorm3(ff_input.permute(0,2,3,1).reshape(B, -1, C), ff_res.permute(0,2,3,1).reshape(B, -1, C))
+
+        # Riporta al formato finale richiesto
         out = out.reshape(B, H, W, C).permute(0, 3, 1, 2)
         return out
 
@@ -1118,8 +1160,8 @@ class PDLPR(nn.Module):
     def __init__(self,
                  model_path=None,
                  in_channels=3,
-                 base_channels=512,
-                 encoder_d_model=512,
+                 base_channels=256,
+                 encoder_d_model=256,
                  encoder_nhead=8,
                  encoder_height=16,
                  encoder_width=16,
@@ -1197,60 +1239,118 @@ class YOLOv5(nn.Module):
             return torch.stack(bboxes)
         return preds
 
-def collate_fn_recognition(batch):
-    batch = [sample for sample in batch if sample[1] is not None and len(sample[1]) > 0]
-    if not batch:
-        return torch.empty(0, 3, 64, 128), torch.empty(0, seq_len, dtype=torch.long)
 
-    images, plate_codes = zip(*batch)
-    images = torch.stack(images)
+
+def generate_attacked_dataset(model, dataset, save_dir, epsilon=0.01, batch_size=32, device="cuda"):
+    """
+    Applica FGSM alla regione della targa e la incolla sull'immagine originale.
+    Salva l'immagine attaccata con il nome del file originale.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=False)
     
-    padded_codes = []
-    for code in plate_codes:
-        code = code[:seq_len]
-        padding_needed = seq_len - len(code)
-        padded_code = F.pad(code, (0, padding_needed), 'constant', 0)
-        padded_codes.append(padded_code)
-    targets = torch.stack(padded_codes).long() 
-    
-    return images, targets
+    # DataLoader con il sampler
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=batch_size, 
+        shuffle=False, 
+        collate_fn=collate_fn_for_attack_generation,
+        sampler=sampler,
+        num_workers=8,
+        pin_memory=True
+    )
 
+    model.to(device)
+    model.eval()
 
+    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=0)
+    transform_rec = T.Compose([T.Resize((64, 128)), T.ToTensor()])
+    to_pil = T.ToPILImage()
 
+    for param in model.parameters():
+        param.requires_grad = False
+
+    if rank == 0:
+        pbar = tqdm(dataloader, desc=f"Generating Adversarial Dataset (Total)", total=len(dataloader))
+    else:
+        pbar = dataloader
+
+    for _, targets, filenames, bboxes_abs in pbar:
+        
+        # --- 1. Prepara il batch di sole targhe ritagliate ---
+        crops_for_attack = []
+        valid_indices = [] # Tiene traccia degli indici validi nel batch
+        
+        for i, filename in enumerate(filenames):
+            try:
+                original_path = os.path.join(dataset.img_dir, filename)
+                original_pil_img = Image.open(original_path).convert("RGB")
+                
+                # Ritaglia la targa usando le coordinate assolute
+                x1, y1, x2, y2 = bboxes_abs[i]
+                cropped_pil = original_pil_img.crop((x1, y1, x2, y2))
+                
+                # Applica la trasformazione che il modello si aspetta
+                cropped_tensor = transform_rec(cropped_pil)
+                crops_for_attack.append(cropped_tensor)
+                valid_indices.append(i)
+            except Exception as e:
+                print(f"Skipping {filename} due to error: {e}")
+                continue
+        
+        if not crops_for_attack:
+            continue
+
+        # Crea il batch di sole targhe e le relative etichette
+        crops_batch = torch.stack(crops_for_attack).to(device).requires_grad_(True)
+        targets_batch = targets[valid_indices].to(device)
+
+        # --- 2. Esegui l'attacco FGSM sulla targa ---
+        model.zero_grad()
+        outputs = model(crops_batch)
+        outputs = outputs.permute(0, 2, 1) # [B, SeqLen, C] -> [B, C, SeqLen]
+        loss = loss_fn(outputs, targets_batch)
+        loss.backward()
+
+        data_grad = crops_batch.grad.data
+        perturbed_crops_batch = crops_batch + epsilon * data_grad.sign()
+        perturbed_crops_batch = torch.clamp(perturbed_crops_batch, 0, 1)
+
+        # --- 3. Incolla le targhe attaccate e salva ---
+        for i, batch_idx in enumerate(valid_indices):
+            filename = filenames[batch_idx]
+            bbox_abs = bboxes_abs[batch_idx]
+            
+            # Carica di nuovo l'immagine originale pulita
+            original_path = os.path.join(dataset.img_dir, filename)
+            final_image = Image.open(original_path).convert("RGB")
+            
+            # Prendi la targa perturbata
+            perturbed_crop_tensor = perturbed_crops_batch[i].cpu().detach()
+            perturbed_crop_pil = to_pil(perturbed_crop_tensor)
+            
+            # Ri-dimensiona la targa attaccata alla sua dimensione originale
+            original_width = bbox_abs[2] - bbox_abs[0]
+            original_height = bbox_abs[3] - bbox_abs[1]
+            perturbed_crop_pil = perturbed_crop_pil.resize((original_width, original_height), Image.Resampling.LANCZOS)
+            
+            # Incolla la targa attaccata sull'immagine pulita
+            final_image.paste(perturbed_crop_pil, (bbox_abs[0], bbox_abs[1]))
+            
+            # Salva con il nome del file originale
+            save_path = os.path.join(save_dir, filename)
+            final_image.save(save_path)
+ 
+ 
 def main():
 
-    
-    transform_pdlpr = T.Compose([
-    T.Resize((48, 144)),  
-    T.ToTensor(),
-])
-    
-    # Datasets
-    train_dataset_rec = CCPDDataset(TRAINING_PATH, transform=None, task='recognition', model="pdlpr")
-    train_sampler_rec = DistributedSampler(train_dataset_rec)
-    train_loader_rec = DataLoader(train_dataset_rec, batch_size=256, sampler=train_sampler_rec, num_workers=8, collate_fn=collate_fn_recognition)
-    disp(f"Train detection: {len(train_dataset_rec)} images")
-
-    val_dataset_rec = CCPDDataset(VALIDATION_PATH, transform=transform_pdlpr, task='recognition', model="pdlpr")
-    tval_sampler_rec = DistributedSampler(val_dataset_rec)
-    val_loader_rec = DataLoader(val_dataset_rec, batch_size=256, sampler=tval_sampler_rec, num_workers=8, collate_fn=collate_fn_recognition)
-    disp(f"Train detection: {len(val_dataset_rec)} images")
-
-    #train_dataset_rec = CCPDDataset(TRAINING_PATH, transform=transform_recognition, task='recognition', model="baseline")
-    #train_sampler_rec = DistributedSampler(train_dataset_rec)
-    #train_loader_rec = DataLoader(train_dataset_rec, batch_size=256, sampler=train_sampler_rec, num_workers=8)
-    #disp(f"Train recognition: {len(train_dataset_rec)} images")
-
-    
-
-
-
-    # -------------------------
-    # Loading models
-    # -------------------------
-    yolov5_model = YOLOv5(model_path=YOLO_MODEL_PATH, device=DEVICE)
+    pdlpr_orig_path = "src/PDLPR/weights/pdlpr_final.pth"
+    pdlpr_model_path = "src/PDLPR/weights/newtrain/pdlpr_final_new.pth"
+    yolo_model_path = "src/YOLO/runs/train/weights/best.pt"
+    yolov5_model = YOLOv5(model_path=yolo_model_path, device=DEVICE)
     pdlpr_model = PDLPR(
-        model_path="src/PDLPR/weights/pdlpr_final.pth",
+        model_path=pdlpr_orig_path, #Check pdlpr_orig_path
         in_channels=3,
         base_channels=256,
         encoder_d_model=256,
@@ -1261,80 +1361,97 @@ def main():
         num_classes=num_classes,
         seq_len=seq_len
     )
-    
+    pdlpr_original = PDLPR(
+        model_path=pdlpr_orig_path,
+        in_channels=3,
+        base_channels=256,
+        encoder_d_model=256,
+        encoder_nhead=4,
+        encoder_height=16,
+        encoder_width=16,
+        decoder_num_layers=2,
+        num_classes=num_classes,
+        seq_len=seq_len
+    )
     num_classes_list = [len(PROVINCES), len(ALPHABETS)] + [len(ADS)] * 5 
     
-    # -------------------------
-    # Training models
-    # -------------------------
+    transform_rec = T.Compose([T.Resize((64, 128)), T.ToTensor()])
 
-    trainer = Trainer(pdlpr_model, task='recognition', num_classes_list=num_classes_list, device=DEVICE) 
-    pdlpr_model = trainer.train(dataloader=train_loader_rec, val_loader=val_loader_rec, epochs=20)
-
-
-    # -------------------------
-    # Evaluation detection and recognition (end-to-end)
-    # -------------------------
-
-    evaluator = Evaluator(det_model=yolov5_model, rec_model=pdlpr_model, device=DEVICE)
-
+    val_dataset = CCPDDataset(VALIDATION_PATH, transform=transform_rec, task='recognition', model="pdlpr", max_samples=5000)
+    val_loader = DataLoader(val_dataset, batch_size=128, shuffle=True, num_workers=4, collate_fn=collate_fn_recognition) # USARE COLLATe
+    
     TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_challenge", "images", "test")
-    test_challenge = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_challenge = DataLoader(test_challenge, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (challenge): {len(test_challenge)} images")
+    test_dataset = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=2000)
+    test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
 
-    metrics_challenge = evaluator.evaluate(test_loader_challenge, recognition=True)
-    disp(f"End-to-End Results (challenge):{metrics_challenge}")
 
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_blur", "images", "test")
-    test_blur = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_blur = DataLoader(test_blur, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (blur): {len(test_blur)} images")
+    # Generation attacked dataset
+    if False:
+        gen_dataset = CCPDDataset(TEST_PATH, transform=None, task='end_to_end', model="yolov5", max_samples=2000, for_attack_generation=True)
+        generate_attacked_dataset(
+            model=pdlpr_original,
+            dataset=gen_dataset,
+            save_dir=os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_challenge_att", "images", "test"),
+            epsilon=0.01,
+            batch_size=64,
+            device=DEVICE
+        )
 
-    metrics_blur = evaluator.evaluate(test_loader_blur, recognition=True)
-    disp(f"End-to-End Results (blur):{metrics_blur}")
+    if False:
+        gen_dataset = CCPDDataset(TRAINING_PATH, transform=None, task='end_to_end', model="yolov5", max_samples=80000, for_attack_generation=True)
+        generate_attacked_dataset(
+            model=pdlpr_original,
+            dataset=gen_dataset,
+            save_dir=os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_base_att", "images", "train"),
+            epsilon=0.01,
+            batch_size=64,
+            device=DEVICE
+        )
+        barrier()
+        disp("Dataset generation complete on all processes.")
 
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_tilt", "images", "test")
-    test_tilt = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_tilt = DataLoader(test_tilt, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (tilt): {len(test_tilt)} images")
+    if True:
+        dataset_attacked_path = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_base_att", "images", "train")
+        train_dataset_base = CCPDDataset(TRAINING_PATH, transform=transform_rec, task='recognition', model="pdlpr")
+        train_dataset_attacked = CCPDDataset(dataset_attacked_path, transform=transform_rec, task='recognition', model="pdlpr")
 
-    metrics_tilt = evaluator.evaluate(test_loader_tilt, recognition=True)
-    disp(f"End-to-End Results (tilt):{metrics_tilt}")
+        print("Combining datasets...")
+        combined_dataset = ConcatDataset([train_dataset_base, train_dataset_attacked])
+        print(f"Total images in combined dataset: {len(combined_dataset)}")
 
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_rotate", "images", "test")
-    test_rotate = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_rotate = DataLoader(test_rotate, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (rotate): {len(test_rotate)} images")
+        train_sampler = DistributedSampler(combined_dataset, shuffle=True)
+        train_loader = DataLoader(combined_dataset, batch_size=128, shuffle=False, sampler=train_sampler, num_workers=4, collate_fn=collate_fn_recognition)
 
-    metrics_rotate = evaluator.evaluate(test_loader_rotate, recognition=True)
-    disp(f"End-to-End Results (rotate):{metrics_rotate}")
 
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_weather", "images", "test")
-    test_weather = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=10000)
-    test_loader_weather = DataLoader(test_weather, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (weather): {len(test_weather)} images")
+        trainer = Trainer(pdlpr_model, task='recognition', num_classes_list=num_classes_list, device=DEVICE, lr=5e-5) # LR più basso per fine-tuning
+        pdlpr_model = trainer.train(dataloader=train_loader, val_loader=val_loader, epochs=5, adversarial=False)
 
-    metrics_weather = evaluator.evaluate(test_loader_weather, recognition=True)
-    disp(f"End-to-End Results (weather):{metrics_weather}")
+    evaluator_original = Evaluator(det_model=yolov5_model, rec_model=pdlpr_original, device=DEVICE)
+    evaluator_trained = Evaluator(det_model=yolov5_model, rec_model=pdlpr_model, device=DEVICE)
 
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_fn", "images", "test")
-    test_fn = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=20000)
-    test_loader_fn = DataLoader(test_fn, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (fn): {len(test_fn)} images")
+    
+    disp("\n--- Valutazione ---")
+    metrics_orig_clean = evaluator_original.evaluate(test_loader, recognition=True, debug_prints=True)
+    disp(f"Modello Originale (Clean): {metrics_orig_clean}")
 
-    metrics_fn = evaluator.evaluate(test_loader_fn, recognition=True)
-    disp(f"End-to-End Results (fn):{metrics_fn}")
+    metrics_robust_clean = evaluator_trained.evaluate(test_loader, recognition=True, debug_prints=True)
+    disp(f"Modello Trained (Clean):   {metrics_robust_clean}")
 
-    TEST_PATH = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_db", "images", "test")
-    test_db = CCPDDataset(TEST_PATH, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=20000)
-    test_loader_db = DataLoader(test_db, batch_size=256, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
-    disp(f"Test dataset (db): {len(test_db)} images")
 
-    metrics_db = evaluator.evaluate(test_loader_db, recognition=True)
-    disp(f"End-to-End Results (db):{metrics_db}")
+    TEST_PATH_ATT = os.path.join(os.environ["SCRATCH"], "dataset", "CCPD_YOLO", "ccpd_challenge_att", "images", "test")
+    test_dataset_att = CCPDDataset(TEST_PATH_ATT, transform=transform_yolo, task='end_to_end', model="yolov5", max_samples=2000)
+    test_loader_att = DataLoader(test_dataset_att, batch_size=128, shuffle=False, collate_fn=collate_fn_end_to_end_filter, num_workers=8)
 
-    cleanup_ddp()
+    disp(f"\n--- Valutazione su DATI ATTACCATI ---")
+    
+    metrics_orig_attacked = evaluator_original.evaluate(test_loader_att, recognition=True, debug_prints=True)
+    disp(f"Modello Originale (Attacked): {metrics_orig_attacked}")
+    
+    metrics_robust_attacked = evaluator_trained.evaluate(test_loader_att, recognition=True, debug_prints=True)
+    disp(f"Modello Trained (Attacked):   {metrics_robust_attacked}")
+
+    return
+
 if __name__ == "__main__":
     main()
     

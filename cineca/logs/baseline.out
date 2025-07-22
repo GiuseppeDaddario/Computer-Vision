@@ -1,102 +1,14 @@
-[INFO] Creating save directory...
-[INFO] Loading Detection Dataset...
-[INFO] Creating Detection DataLoader...
-[INFO] Initializing Detection Model...
-[INFO] Using 4 GPUs for detection
-
-[INFO] Starting Detection Training...
-[Detection] Epoch 1/3: 100%|██████████| 625/625 [03:59<00:00,  2.61it/s]
-Epoch 1: Train Loss=0.000174, Val Loss=0.000058
-[Detection] Epoch 2/3: 100%|██████████| 625/625 [02:38<00:00,  3.95it/s]
-Epoch 2: Train Loss=0.000053, Val Loss=0.000037
-[Detection] Epoch 3/3: 100%|██████████| 625/625 [02:35<00:00,  4.02it/s]
-Epoch 3: Train Loss=0.000043, Val Loss=0.000047
-
-[INFO] Saving Detection Model...
-[INFO] Loading Recognition Dataset...
-[INFO] Creating Recognition DataLoader...
-[INFO] Initializing Recognition Model...
-[INFO] Using 4 GPUs for recognition
-
-[INFO] Starting Recognition Training...
-[Recognition] Epoch 1/3: 100%|██████████| 625/625 [01:43<00:00,  6.03it/s]
-Epoch 1: Train Loss=4.685712, Val Loss=0.515303
-[Recognition] Epoch 2/3: 100%|██████████| 625/625 [01:35<00:00,  6.53it/s]
-Epoch 2: Train Loss=0.344252, Val Loss=0.173549
-[Recognition] Epoch 3/3: 100%|██████████| 625/625 [01:35<00:00,  6.57it/s]
-Epoch 3: Train Loss=0.099051, Val Loss=0.129469
-
-[INFO] Saving Recognition Model...
-[INFO] Training complete. Used GPUs: 4
-[INFO] Loading models for final evaluation on test subsets...
-
-
-[INFO] Running full pipeline evaluation on subset: ccpd_blur
-Testing total pipeline: 100%|██████████| 81/81 [04:10<00:00,  3.09s/it]
-Total number of samples processed: 20611
-Valid bounding boxes (IoU > 0.6): 15777
-Skipped (IoU <= 0.6): 4834
-Correct full license plates: 4408
-Character-level accuracy: 78.70%
-Pipeline accuracy (full plate, IoU > 0.6): 27.94%
-Mean IoU over all samples: 0.6716
-
-[INFO] Running full pipeline evaluation on subset: ccpd_challenge
-Testing total pipeline: 100%|██████████| 196/196 [11:01<00:00,  3.38s/it]
-Total number of samples processed: 50003
-Valid bounding boxes (IoU > 0.6): 41365
-Skipped (IoU <= 0.6): 8638
-Correct full license plates: 15354
-Character-level accuracy: 82.97%
-Pipeline accuracy (full plate, IoU > 0.6): 37.12%
-Mean IoU over all samples: 0.6874
-
-[INFO] Running full pipeline evaluation on subset: ccpd_db
-Testing total pipeline: 100%|██████████| 40/40 [01:49<00:00,  2.75s/it]
-Total number of samples processed: 10132
-Valid bounding boxes (IoU > 0.6): 6573
-Skipped (IoU <= 0.6): 3559
-Correct full license plates: 2402
-Character-level accuracy: 81.72%
-Pipeline accuracy (full plate, IoU > 0.6): 36.54%
-Mean IoU over all samples: 0.6292
-
-[INFO] Running full pipeline evaluation on subset: ccpd_fn
-Testing total pipeline: 100%|██████████| 82/82 [03:58<00:00,  2.90s/it]
-Total number of samples processed: 20967
-Valid bounding boxes (IoU > 0.6): 14718
-Skipped (IoU <= 0.6): 6249
-Correct full license plates: 6035
-Character-level accuracy: 83.61%
-Pipeline accuracy (full plate, IoU > 0.6): 41.00%
-Mean IoU over all samples: 0.6534
-
-[INFO] Running full pipeline evaluation on subset: ccpd_rotate
-Testing total pipeline: 100%|██████████| 40/40 [02:33<00:00,  3.83s/it]
-Total number of samples processed: 10053
-Valid bounding boxes (IoU > 0.6): 9509
-Skipped (IoU <= 0.6): 544
-Correct full license plates: 2817
-Character-level accuracy: 80.07%
-Pipeline accuracy (full plate, IoU > 0.6): 29.62%
-Mean IoU over all samples: 0.7598
-
-[INFO] Running full pipeline evaluation on subset: ccpd_tilt
-Testing total pipeline: 100%|██████████| 119/119 [07:09<00:00,  3.61s/it]
-Total number of samples processed: 30216
-Valid bounding boxes (IoU > 0.6): 27056
-Skipped (IoU <= 0.6): 3160
-Correct full license plates: 7862
-Character-level accuracy: 81.15%
-Pipeline accuracy (full plate, IoU > 0.6): 29.06%
-Mean IoU over all samples: 0.7271
-
-[INFO] Running full pipeline evaluation on subset: ccpd_weather
-Testing total pipeline: 100%|██████████| 40/40 [02:38<00:00,  3.96s/it]
-Total number of samples processed: 9999
-Valid bounding boxes (IoU > 0.6): 9882
-Skipped (IoU <= 0.6): 117
-Correct full license plates: 9213
-Character-level accuracy: 98.81%
-Pipeline accuracy (full plate, IoU > 0.6): 93.23%
-Mean IoU over all samples: 0.7792
+Test dataset (challenge): 10000 images
+End-to-End Results (challenge):{'FPS_Detection': 272.97, 'FPS_Full': 121.11, 'Mean_IoU': 0.7246, 'Detection_Accuracy_IoU_0.7': 66.19, 'Plate_Accuracy_Full': 38.85, 'Plate_Accuracy(-Fisrt_Char)': 42.87, 'Plate_Accuracy_Full_on_Processed': 44.03, 'Plate_Accuracy(-First)_on_Processed': 48.59}
+Test dataset (blur): 10000 images
+End-to-End Results (blur):{'FPS_Detection': 6106.83, 'FPS_Full': 276.32, 'Mean_IoU': 0.7038, 'Detection_Accuracy_IoU_0.7': 59.95, 'Plate_Accuracy_Full': 24.17, 'Plate_Accuracy(-Fisrt_Char)': 25.65, 'Plate_Accuracy_Full_on_Processed': 29.73, 'Plate_Accuracy(-First)_on_Processed': 31.55}
+Test dataset (tilt): 10000 images
+End-to-End Results (tilt):{'FPS_Detection': 6109.04, 'FPS_Full': 244.14, 'Mean_IoU': 0.7535, 'Detection_Accuracy_IoU_0.7': 76.68, 'Plate_Accuracy_Full': 42.9, 'Plate_Accuracy(-Fisrt_Char)': 49.33, 'Plate_Accuracy_Full_on_Processed': 46.84, 'Plate_Accuracy(-First)_on_Processed': 53.87}
+Test dataset (rotate): 10000 images
+End-to-End Results (rotate):{'FPS_Detection': 6108.24, 'FPS_Full': 215.45, 'Mean_IoU': 0.8021, 'Detection_Accuracy_IoU_0.7': 91.23, 'Plate_Accuracy_Full': 50.14, 'Plate_Accuracy(-Fisrt_Char)': 55.04, 'Plate_Accuracy_Full_on_Processed': 51.67, 'Plate_Accuracy(-First)_on_Processed': 56.72}
+Test dataset (weather): 9999 images
+End-to-End Results (weather):{'FPS_Detection': 6076.71, 'FPS_Full': 219.75, 'Mean_IoU': 0.8224, 'Detection_Accuracy_IoU_0.7': 94.81, 'Plate_Accuracy_Full': 95.82, 'Plate_Accuracy(-Fisrt_Char)': 96.3, 'Plate_Accuracy_Full_on_Processed': 96.33, 'Plate_Accuracy(-First)_on_Processed': 96.81}
+Test dataset (fn): 20000 images
+End-to-End Results (fn):{'FPS_Detection': 6100.44, 'FPS_Full': 253.71, 'Mean_IoU': 0.6941, 'Detection_Accuracy_IoU_0.7': 55.02, 'Plate_Accuracy_Full': 40.78, 'Plate_Accuracy(-Fisrt_Char)': 44.34, 'Plate_Accuracy_Full_on_Processed': 50.27, 'Plate_Accuracy(-First)_on_Processed': 54.66}
+Test dataset (db): 10132 images
+End-to-End Results (db):{'FPS_Detection': 6111.58, 'FPS_Full': 374.25, 'Mean_IoU': 0.6269, 'Detection_Accuracy_IoU_0.7': 39.6, 'Plate_Accuracy_Full': 26.46, 'Plate_Accuracy(-Fisrt_Char)': 29.02, 'Plate_Accuracy_Full_on_Processed': 41.41, 'Plate_Accuracy(-First)_on_Processed': 45.41}

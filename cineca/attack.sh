@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=baseline
-#SBATCH --time=2:00:00                       
+#SBATCH --job-name=attack
+#SBATCH --time=02:00:00                       
 #SBATCH --nodes=1                             
 #SBATCH --ntasks-per-node=1                   
-#SBATCH --cpus-per-task=32                    
+#SBATCH --cpus-per-task=8                    
 #SBATCH --gres=gpu:4                          
 #SBATCH --partition=boost_usr_prod           
 #SBATCH --qos=normal                        
-#SBATCH --output=cineca/logs/baseline.out
-#SBATCH --error=cineca/logs/baseline.err
+#SBATCH --output=cineca/logs/attack.out
+#SBATCH --error=cineca/logs/attack.err
 #SBATCH --account=try25_navigli          
 
 
@@ -19,4 +19,4 @@ source $SCRATCH/ComputerVision/bin/activate
 
 cd $SLURM_SUBMIT_DIR 
 
-srun python -m torch.distributed.launch --nproc_per_node=4 cineca/codes/baseline.py
+srun python -m torch.distributed.launch --nproc_per_node=4 cineca/codes/attack.py
